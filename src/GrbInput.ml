@@ -10,6 +10,7 @@ type raexpressiontype = RATable of string	(* The meaning of this should be clear
 					  | RAProject of raexpressiontype * string list (* ... and this one as well. The second argument lists the column that are left in the result *)
 					  | RACartesian of raexpressiontype list (* Cartesian product of several datasets. The names of columns in these datasets should all be different --- we do not have mechanisms to _automatically_ rename columns *)
 					  | RAUnion of raexpressiontype * raexpressiontype (* Here both datasets should have the same schema *)
+					  | RAUnionWithDifferentSchema of raexpressiontype * raexpressiontype (* Here the datasets should have disjoint sets of attributes. This operation adds more columns to both datasets, filling them with NULLs, such that they will have the same schema. Then it unions them. *)
 					  | RAIntersection of raexpressiontype * raexpressiontype (* Here too *)
 					  | RADifference of raexpressiontype * raexpressiontype (* And here too *)
 					  | RANewColumn of raexpressiontype * string * raanyexp (* Here a new column is computed. For each row in the dataset, the value in the new column is computed from the values in existing columns (the same applies to the expression in RAFilter *)
@@ -284,7 +285,7 @@ let onlyAggregation dgtmp ((filterloc, attrlocs, ixtype) as tblloctmp) groupattr
 	let filteredNodeLocs = RLMap.map (fun attrloc ->
 		let vtype = (DG.findnode attrloc !changedg).nkind.outputtype
 		in
-		let (dgnew, filterid) = addNodesToGraph !changedg jointtype [longorid; attrloc] (nkFilter vtype) (fun x -> if x = 0 then PortSingleB else PortSingle vtype)
+		let (dgnew, filterid) = addNodesToGraph !changedg jointtype [iseqloc; attrloc] (nkFilter vtype) (fun x -> if x = 0 then PortSingleB else PortSingle vtype)
 		in
 		changedg := dgnew;
 		filterid
@@ -432,6 +433,36 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	) attrlocleft (dg'', RLMap.empty)
 	in
 	(dgfinal, (filterloc, attrloc, jointtype))
+| RAUnionWithDifferentSchema (leftexp, rightexp) ->
+	let (dgtmp, (filterlocleft, attrlocleft, ixtypeleft)) = convertRAwork dg0 dblocs leftexp
+	in
+	let (dg',(filterlocright, attrlocright, ixtyperight)) = convertRAwork dgtmp dblocs rightexp
+	in
+	let jointtype = addIndexTypes ixtypeleft ixtyperight
+	in
+	let (dg'',filterloc) = putIdNodeOnSum dg' [(filterlocleft,ixtypeleft); (filterlocright,ixtyperight)] jointtype
+	in
+	let (dgleft, attrlocleft) = RLMap.fold (fun attrname loc (dgcurr, attrloccurr) ->
+		let vt = (DG.findnode loc dgcurr).nkind.outputtype
+		in
+		let (dg1, nullloc) = addNodesToGraph dgcurr ixtyperight [] (nkOperation 0 vt (OPNull vt)) (fun _ -> raise (Failure "This operation has no inputs"))
+		in
+		let (dg2, oneloc) = putIdNodeOnSum dg1 [(loc,ixtypeleft); (nullloc, ixtyperight)] jointtype
+		in
+		(dg2, RLMap.add attrname oneloc attrloccurr)
+	) attrlocleft (dg'', RLMap.empty)
+	in
+	let (dgboth, attrloc) = RLMap.fold (fun attrname loc (dgcurr, attrloccurr) ->
+		let vt = (DG.findnode loc dgcurr).nkind.outputtype
+		in
+		let (dg1, nullloc) = addNodesToGraph dgcurr ixtypeleft [] (nkOperation 0 vt (OPNull vt)) (fun _ -> raise (Failure "This operation has no inputs"))
+		in
+		let (dg2, oneloc) = putIdNodeOnSum dg1 [(nullloc,ixtypeleft); (loc, ixtyperight)] jointtype
+		in
+		(dg2, RLMap.add attrname oneloc attrloccurr)
+	) attrlocright (dgleft, attrlocleft)
+	in
+	(dgboth, (filterloc, attrloc, jointtype))
 | RAIntersection (leftexp, rightexp) ->
 	let (dgtmp, (filterlocleft, attrlocleft, ixtypeleft)) = convertRAwork dg0 dblocs leftexp
 	in
@@ -552,8 +583,14 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 			}
 			in
 			changedg :=
-				DG.addedge ((IxM [| Some (attrloc, varIdx, Array.init (Array.length ixtypecont.(varIdx)) id) |], NewName.get ()),
-					nnid, PortSingle attrvtype) (DG.addnode idnode !changedg);
+				(let neweid = NewName.get ()
+				in
+				print_string (NewName.to_string neweid ^ "\n");
+				let ndg = DG.addedge ((IxM [| Some (attrloc, varIdx, Array.init (Array.length ixtypecont.(varIdx)) id) |], neweid),
+					nnid, PortSingle attrvtype) (DG.addnode idnode !changedg)
+				in
+				GrbOptimize.areIndicesInOrderForAEdge ndg (DG.findedge neweid ndg);
+				ndg);
 			nnid
 		in
 		let updatedCols = List.fold_right (fun attrname m ->
@@ -583,13 +620,18 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		let (dgnext, (nextfilterloc, nextattrlocs, nextixtype)) = onlyAggregation dgwsortpair (updatedFilterLoc, updatedColsx, variantixtype) contractcols [(sortcol, AGMakeBag)] (* nextixtype is same for all variants *)
 		in
 		changedg := dgnext;
-		(updatedFilterLoc, nextfilterloc, RLMap.find sortcol nextattrlocs, variantixtype, nextixtype, nameidxs, RLMap.find sortcol updatedCols)
+		(updatedFilterLoc, nextfilterloc, nextattrlocs, variantixtype, nextixtype, nameidxs, updatedCols)
 	) ixtypecont
 	in
-	let sortResPerVariant = Array.mapi (fun varIdx (updatefilterloc, nextfilterloc, bagnodeloc, variantixtype, aggrixtype, varnameidxs, justSortCol) ->
+	let sortResPerVariant = Array.mapi (fun varIdx (updatefilterloc, nextfilterloc, locsFromAggro, variantixtype, aggrixtype, varnameidxs, updatedCols) ->
+		let bagnodeloc = RLMap.find sortcol locsFromAggro
+		and justSortCol = RLMap.find sortcol updatedCols
+		in
 		let (jointixtype, compmaps) = longprodIxtypes [variantixtype; aggrixtype]
 		in
-		let sumNodes = Array.mapi (fun i (_, othfilterloc, othbagnodeloc, othvariantixtype, _, othvarnameidxs, _) ->
+		let sumNodes = Array.mapi (fun i (_, othfilterloc, othLocsFromAggro, othvariantixtype, _, othvarnameidxs, _) ->
+			let othbagnodeloc = RLMap.find sortcol othLocsFromAggro
+			in
 			if i = varIdx then
 			begin
 				let expvarnameidxs = Array.map (fun (previd, dimname, dimvt) ->
@@ -645,7 +687,20 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		in
 		let (dg3, updateExpFilterLoc) = putIdNodeOnTop dg2 updatefilterloc variantixtype jointixtype (List.nth compmaps 0)
 		in
-		let (dg4, bothFilterLoc) = addNodesToGraph dg3 jointixtype [nextExpFilterLoc; updateExpFilterLoc] nkAnd (fun _ -> PortStrictB)
+		let (dg3a, joinCondLocs) = List.fold_right (fun contractcol (dgcurr, prevLocs) ->
+			let locAtVariant = RLMap.find contractcol updatedCols
+			and locAtAggro = RLMap.find contractcol locsFromAggro
+			in
+			let (dga, upLocAtVariant) = putIdNodeOnTop dgcurr locAtVariant variantixtype jointixtype (List.nth compmaps 0)
+			in
+			let (dgb, upLocAtAggro) = putIdNodeOnTop dga locAtAggro aggrixtype jointixtype (List.nth compmaps 1)
+			in
+			let (dgc, eqLoc) = addNodesToGraph dgb jointixtype [upLocAtVariant; upLocAtAggro] nkIsEq (fun _ -> PortCompare)
+			in
+			(dgc, eqLoc :: prevLocs)
+		) contractcols (dg3, [])
+		in
+		let (dg4, bothFilterLoc) = addNodesToGraph dg3a jointixtype (nextExpFilterLoc :: updateExpFilterLoc :: joinCondLocs) nkAnd (fun _ -> PortStrictB)
 		in
 		changedg := dg4;
 		(bothFilterLoc, cntnodeloc, jointixtype)

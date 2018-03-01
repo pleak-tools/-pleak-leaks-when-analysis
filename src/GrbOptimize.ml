@@ -112,6 +112,72 @@ let splitIndexTypes dg =
 	dg''
 ;;
 
+let areIndicesInOrderForANode n =
+	let (AITT a) = n.inputindextype
+	and (AITT b) = n.outputindextype
+	and (IxM m) = n.ixtypemap
+	in
+	if Array.length a <> Array.length m then raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " has mismatching lengths of a and m" )) else
+	Array.iteri (fun idx aelem ->
+		let melem = m.(idx)
+		in
+		match melem with
+			| None -> raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " has None inside m") )
+			| Some ((), c, melemarr) ->
+			begin
+				if c >= Array.length b then raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " requires more elements in b than it has") ) else
+				let belem = b.(idx)
+				in
+				if Array.length belem <> Array.length melemarr then raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " has wrong number of point-backs") ) else
+				Array.iteri (fun idx ptr ->
+					let it1 = belem.(idx)
+					in
+					if ptr >= Array.length aelem then raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " has too few dimensions") ) else
+					let it2 = aelem.(ptr)
+					in
+					if it1 <> it2 then raise (Failure ("Indices not in order: node " ^ (NewName.to_string n.id) ^ " has inequal dimensions") ) else ()
+				) melemarr
+			end
+	) a
+;;
+
+let areIndicesInOrderForAEdge dg ((IxM cc, eid), tgt, _) =
+	let (AITT tgta) = tgt.inputindextype
+	in
+	if Array.length tgta <> Array.length cc then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " has wrong number of handled components" )) else
+	Array.iteri (fun idx ccelem ->
+		let aelem = tgta.(idx)
+		in
+		match ccelem with
+			| None -> ()
+			| Some (srcid, compnum, backmap) ->
+				if not (DG.hasnode srcid dg) then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " is missing a source" )) else
+				let src = DG.findnode srcid dg
+				in
+				let (AITT srcb) = src.outputindextype
+				in
+				if compnum >= Array.length srcb then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " points to a too large component" )) else
+				if Array.length srcb.(compnum) <> Array.length backmap then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " has the wrong number of elements in backmap" )) else
+				Array.iteri (fun bidx ptr ->
+					let barrelem = srcb.(compnum).(bidx)
+					in
+					if ptr >= Array.length tgta.(idx) then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " has backmap pointing too far" )) else
+					let aarrelem = tgta.(idx).(ptr)
+					in
+					if barrelem <> aarrelem then raise (Failure ("Indices not in order: edge " ^ (NewName.to_string eid) ^ " into node " ^ (NewName.to_string tgt.id) ^ " has backmap connecting different dimensions" )) else ()
+				) backmap
+	) cc
+;;
+
+let areIndicesInOrder s dg =
+	print_string ("Entering areIndicesInOrder: " ^ s ^ "\n");
+	DG.foldnodes (fun n () ->
+		areIndicesInOrderForANode n
+	) dg ();
+	DG.foldedges (fun edgetuple () -> areIndicesInOrderForAEdge dg edgetuple) dg ();
+	dg
+;;
+
 let foldAndsTogether dg =
 	let rec makeLongEdge (IxM m) =
 		let Some (midid, comp, prt) = m.(0)
@@ -212,6 +278,7 @@ let reduceNodeDim dg nid =
 		ixtypemap = IxM [| Some ((), 0, mContNew) |];
 	}
 	in
+	areIndicesInOrderForANode nn;
 	let dg' = DG.addnode nn (DG.remnode n.id dg)
 	in
 	let dg2 = DG.nodefoldedges (fun ((IxM em, eid), tgt, prt) dgcurr ->
@@ -507,7 +574,27 @@ let simplifyAnd dg n =
 				| _ -> dgcurr
 		) n dg
 		in
-		if !foundTrue then Some simpTrueDg else None
+		let inpcount = DG.nodefoldedges (fun _ i -> i+1) (DG.findnode n.id simpTrueDg) 0
+		in
+		let afterCountDg =
+			if inpcount = 0 then
+				let nnew = {n with
+					inputs = PortMap.empty;
+					nkind = nkTrue
+				}
+				in
+				(foundTrue := true; DG.changenode nnew simpTrueDg)
+			else if inpcount = 1 then
+				let nnew = {n with
+					inputs = PortMap.empty;
+					nkind = nkId VBoolean
+				}
+				in
+				(foundTrue:= true;
+				DG.nodefoldedges (fun ((cc,eid),_,_) dgcurr -> DG.addedge ((cc,eid), n.id, PortSingle VBoolean) dgcurr) (DG.findnode n.id simpTrueDg) (DG.changenode nnew simpTrueDg))
+			else simpTrueDg
+		in
+		if !foundTrue then Some afterCountDg else None
 	end
 ;;
 
@@ -528,6 +615,25 @@ let simplifyAddition dg n =
 	Some dgnew
 ;;
 
+let dontOutputNulls dg n =
+	if n.nkind.nodeintlbl <> NNOutput then None else
+	let srcidpl = ref None
+	in
+	DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
+		match prt with
+			| PortSingle _ ->
+				let Some (srcid,_,_) = cc.(0)
+				in srcidpl := Some srcid
+			| _ -> ()
+	) n ();
+	let Some srcid = !srcidpl
+	in
+	let src = DG.findnode srcid dg
+	in
+	match src.nkind.nodeintlbl with
+		| NNOperation (OPNull _) -> Some (DG.remnode n.id dg)
+		| _ -> None
+;;
 
 let simplifyArithmetic dg =
 	TopolSorter.fold (fun nid dgnew ->
@@ -548,8 +654,14 @@ let simplifyArithmetic dg =
 		let dg3 = match simplifyAddition dg2 n2 with
 			| None -> dg2
 			| Some dg' -> dg'
+		in
+		let n3 = DG.findnode nid dg3
+		in
+		let dg4 = match dontOutputNulls dg3 n3 with
+			| None -> dg3
+			| Some dg' -> dg'
 		in 
-		dg3
+		dg4
 	) dg dg;;
 
 let iseqToDimEqNode dg n =
@@ -947,7 +1059,7 @@ let moveOverEqualDims dg n =
 				nkind = nkTrue;
 				inputs = PortMap.empty;
 				inputindextype = n.outputindextype;
-				ixtypemap = IxM [| Some ((), 0, Array.init (Array.length nb) (fun x -> x)) |];
+				ixtypemap = IxM [| Some ((), 0, Array.init (Array.length nb.(0)) (fun x -> x)) |];
 			}
 			in
 			Some (DG.changenode nnew dg)
@@ -958,7 +1070,7 @@ let moveOverEqualDims dg n =
 				nkind = nkId n.nkind.outputtype;
 				inputs = PortMap.empty;
 				inputindextype = n.outputindextype;
-				ixtypemap = IxM [| Some ((), 0, Array.init (Array.length nb) (fun x -> x)) |];
+				ixtypemap = IxM [| Some ((), 0, Array.init (Array.length nb.(0)) (fun x -> x)) |];
 			}
 			in
 			Some (DG.addedge ((IxM [| Some (srcid, 0, [||] ) |] ,NewName.get ()), n.id, PortSingle n.nkind.outputtype) (DG.changenode nnew dg))

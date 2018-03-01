@@ -4,3 +4,4 @@
 *.byte
 leakswhen.result
 _build
+*.ps
