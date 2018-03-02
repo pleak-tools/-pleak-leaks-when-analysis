@@ -67,6 +67,21 @@ let rec describeDependency dg n =
 			and larger = List.assoc (PortOperInput 2) inpdescs
 			in
 			["Whether " ^ smaller ^ " is less than " ^ larger, String.concat " or " (List.map (String.concat " and ") (oneOfEach (List.filter (function [] -> false | _ -> true) inpdeps))) ]
+		| NNOperation OPLessEqual ->
+			let (inpdescs, inpdeps) = DG.nodefoldedges (fun ((IxM m,eid),_,prt) (ll, dd) ->
+				let Some (srcid,_,_) = m.(0)
+				in
+				let ninp = DG.findnode srcid dg
+				in
+				let ddcurr = describeDependency dg ninp
+				in
+				((prt, describeCondition dg ninp) :: ll, (List.map snd ddcurr) :: dd )
+			) n ([], [])
+			in
+			let smaller = List.assoc (PortOperInput 1) inpdescs
+			and larger = List.assoc (PortOperInput 2) inpdescs
+			in
+			["Whether " ^ smaller ^ " is less than or equal to " ^ larger, String.concat " or " (List.map (String.concat " and ") (oneOfEach (List.filter (function [] -> false | _ -> true) inpdeps))) ]
 		| NNMakeBag _
 		| NNAggregate AGMakeBag
 		| NNFilter _
@@ -202,6 +217,10 @@ and describeCondition dg n =
 			let desc = collectInputDescs ()
 			in
 			"Whether {" ^ (PortMap.find (PortOperInput 1) desc) ^ "} is smaller than {" ^ (PortMap.find (PortOperInput 2) desc) ^ "}"
+		| NNOperation OPLessEqual ->
+			let desc = collectInputDescs ()
+			in
+			"Whether {" ^ (PortMap.find (PortOperInput 1) desc) ^ "} is smaller than or equal to {" ^ (PortMap.find (PortOperInput 2) desc) ^ "}"
 		| NNMakeBag _
 		| NNAggregate AGMakeBag ->
 			let descs = collectInputDescs ()

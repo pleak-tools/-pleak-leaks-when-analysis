@@ -4,6 +4,17 @@ open GrbCommons;;
 type mappingDirection = MDForward | MDBackward;;
 
 let printgraph oc dg = (* Sends the description of dg in the dot format to the channel oc *)
+	let needsValuetype =
+		DG.foldnodes (fun n b ->
+			if b then true else
+			let checkIndexType (AITT a) =
+				let res = ref false
+				in
+				Array.iter (Array.iter (fun (vt,_) -> if vt <> VInteger then res := true)) a;
+				!res
+			in (checkIndexType n.inputindextype) || (checkIndexType n.outputindextype)
+		) dg false
+	in
 	let dotnodeid x = "v_" ^ (NewName.to_string x)
 	and dotedgeid x = "e_" ^ (NewName.to_string x)
 	and outputMasked s =
@@ -19,7 +30,7 @@ let printgraph oc dg = (* Sends the description of dg in the dot format to the c
 				(if idx > 0 then output_string oc "| " else ());
 				let (vt,tp) = dims.(idx)
 				in
-				output_string oc ("{ " ^ (string_of_int n) ^ " | " ^ (string_of_valuetype vt) ^ " | ");
+				output_string oc ("{ " ^ (string_of_int n) ^ (if needsValuetype then " | " ^ (string_of_valuetype vt) else "") ^ " | ");
 				(match tp with
 					| None -> ()
 					| Some s -> outputMasked (s ^ " ")

@@ -455,7 +455,7 @@ let inclvalue x y = match x,y with  (* strict inclusion *)
 
 let ns_inclvalue x y = (x=y) || (inclvalue x y);;
 
-type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPNull of valuetype | OPGeoDist | OPCoalesce | OPITE | OPTuple of string list | OPProject of string;;
+type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string;;
 
 let string_of_opname = function
 | OPPlus -> "+"
@@ -463,12 +463,16 @@ let string_of_opname = function
 | OPMult -> "*"
 | OPIsEq -> "=?"
 | OPLessThan -> "<?"
+| OPLessEqual -> "<=?"
+| OPGreaterThan -> ">?"
+| OPGreaterEqual -> ">=?"
 | OPAnd -> "&&"
 | OPOr -> "||"
 | OPNot -> "!"
 | OPDiv -> "/"
 | OPGeoDist -> "distance"
 | OPCoalesce -> "coalesce"
+| OPCeiling -> "ceiling"
 | OPIntConst x -> (string_of_int x) ^ "C"
 | OPStringConst s -> "\"" ^ s ^ "\""
 | OPRealConst r -> (string_of_float r) ^ "C"
@@ -479,7 +483,7 @@ let string_of_opname = function
 | OPProject s -> "Pr " ^ s
 ;;
 
-type aggregationname = AGMax | AGMin | AGSum | AGCount | AGExist | AGMakeBag;;
+type aggregationname = AGMax | AGMin | AGSum | AGCount | AGExist | AGAverage | AGMakeBag;;
 
 let string_of_aggrname = function
 | AGMax -> "max"
@@ -488,6 +492,7 @@ let string_of_aggrname = function
 | AGCount -> "count"
 | AGExist -> "exist"
 | AGMakeBag -> "bag"
+| AGAverage -> "avg"
 ;;
 
 type nodename = 

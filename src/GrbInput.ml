@@ -804,10 +804,14 @@ and (computeAnyExp : DG.t -> tablelocationtype -> raanyexp -> DG.t * attrlocatio
 		| OPDiv
 		| OPMult
 		| OPGeoDist
+		| OPCeiling
 		| OPCoalesce -> let l = List.length args in nkOperation l (DG.findnode (List.hd arglocs) dg').nkind.outputtype opname, (fun i -> PortOperInput (i + 1))
 		| OPNeg -> nkOperation 1 (DG.findnode (List.hd arglocs) dg').nkind.outputtype OPNeg, (fun _ -> PortOperInput 1)
 		| OPIsEq -> nkIsEq, (fun _ -> PortCompare)
 		| OPLessThan -> nkOperation 2 (DG.findnode (List.hd arglocs) dg').nkind.outputtype OPLessThan, (fun i -> PortOperInput (i + 1))
+		| OPLessEqual -> nkOperation 2 (DG.findnode (List.hd arglocs) dg').nkind.outputtype OPLessEqual, (fun i -> PortOperInput (i + 1))
+		| OPGreaterThan -> nkOperation 2 (DG.findnode (List.hd arglocs) dg').nkind.outputtype OPLessThan, (fun i -> if i = 0 then PortOperInput 2 else PortOperInput 1)
+		| OPGreaterEqual -> nkOperation 2 (DG.findnode (List.hd arglocs) dg').nkind.outputtype OPLessEqual, (fun i -> if i = 0 then PortOperInput 2 else PortOperInput 1)
 		| OPAnd -> nkAnd, (fun _ -> PortStrictB)
 		| OPOr -> nkOr, (fun _ -> PortUnstrB)
 		| OPNot -> nkNot, (fun _ -> PortSingleB)

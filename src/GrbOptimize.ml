@@ -618,20 +618,119 @@ let simplifyAddition dg n =
 let dontOutputNulls dg n =
 	if n.nkind.nodeintlbl <> NNOutput then None else
 	let srcidpl = ref None
+	and cntrlpl = ref None
+	and srcidbackmappl = ref None
+	and cntrlbackmappl = ref None
+	and vtpl = ref None
 	in
 	DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
 		match prt with
-			| PortSingle _ ->
-				let Some (srcid,_,_) = cc.(0)
-				in srcidpl := Some srcid
-			| _ -> ()
+			| PortSingle vt ->
+				let Some (srcid,_,backmap) = cc.(0)
+				in (srcidpl := Some srcid; srcidbackmappl := Some backmap; vtpl := Some vt)
+			| PortSingleB ->
+				let Some (srcid,_,backmap) = cc.(0)
+				in (cntrlpl := Some srcid; cntrlbackmappl := Some backmap)
 	) n ();
 	let Some srcid = !srcidpl
 	in
 	let src = DG.findnode srcid dg
 	in
 	match src.nkind.nodeintlbl with
-		| NNOperation (OPNull _) -> Some (DG.remnode n.id dg)
+		| NNOperation (OPNull _)
+		| NNOperation (OPIntConst _)
+		| NNOperation (OPStringConst _)
+		| NNOperation (OPRealConst _)
+		| NNOperation (OPBoolConst _) -> Some (DG.remnode n.id dg)
+		| NNITE _ ->
+		begin
+			let Some cntrlid = !cntrlpl
+			and Some srcbackmap = !srcidbackmappl
+			and Some cntrlbackmap = !cntrlbackmappl
+			and Some vt = !vtpl
+			and (AITT na) = n.inputindextype
+			in
+			let condidpl = ref None
+			and condbackmappl = ref None
+			and trueidpl = ref None
+			and truebackmappl = ref None
+			and falseidpl = ref None
+			and falsebackmappl = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc, _), _, prt) () ->
+				match prt with
+					| PortSingleB ->
+						let Some (srcid,_,backmap) = cc.(0)
+						in (condidpl := Some srcid; condbackmappl := Some backmap)
+					| PortTrue _ ->
+						let Some (srcid,_,backmap) = cc.(0)
+						in (trueidpl := Some srcid; truebackmappl := Some backmap)
+					| PortFalse _ ->
+						let Some (srcid,_,backmap) = cc.(0)
+						in (falseidpl := Some srcid; falsebackmappl := Some backmap)
+			) src ();
+			let Some condid = !condidpl
+			and Some condbackmap = !condbackmappl
+			and Some trueid = !trueidpl
+			and Some truebackmap = !truebackmappl
+			and Some falseid = !falseidpl
+			and Some falsebackmap = !falsebackmappl
+			in
+			let falsenode = DG.findnode falseid dg
+			and truenode = DG.findnode trueid dg
+			and condnode = DG.findnode condid dg
+			in
+			let notnode = {
+				nkind = nkNot;
+				id = NewName.get ();
+				inputindextype = condnode.outputindextype;
+				outputindextype = condnode.outputindextype;
+				inputs = PortMap.empty;
+				ixtypemap = identityIndexMap () condnode.outputindextype;
+			}
+			in
+			let trueconj = {
+				nkind = nkAnd;
+				id = NewName.get ();
+				inputindextype = n.inputindextype;
+				outputindextype = n.inputindextype;
+				inputs = PortMap.empty;
+				ixtypemap = identityIndexMap () n.inputindextype;
+			}
+			in
+			let falseconj = { trueconj with id = NewName.get (); }
+			and trueoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt; }
+			and falseoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt; }
+			in
+			let IxM srccc = src.ixtypemap
+			and AITT srca = src.inputindextype
+			and AITT srcb = src.outputindextype
+			in
+			let Some ((), _, srcixm) = srccc.(0)
+			in
+			let srcixminv = Array.make (Array.length srca.(0)) 0
+			in
+			Array.iteri (fun idx ptr ->
+				srcixminv.(ptr) <- idx
+			) srcixm;
+			Some (
+			DG.addedge ((IxM [| Some (notnode.id, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), falseconj.id, PortStrictB) (
+			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), falseconj.id, PortStrictB) (
+			DG.addedge ((IxM [| Some (condid, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), trueconj.id, PortStrictB) (
+			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), trueconj.id, PortStrictB) (
+			DG.addedge ((identityIndexMap condid condnode.outputindextype, NewName.get ()), notnode.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (trueconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), trueoutput.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (truenode.id, 0, Array.init (Array.length truebackmap) (fun i -> srcbackmap.(srcixminv.(truebackmap.(i))))) |], NewName.get ()), trueoutput.id, PortSingle vt) (
+			DG.addedge ((IxM [| Some (falseconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), falseoutput.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (falsenode.id, 0, Array.init (Array.length falsebackmap) (fun i -> srcbackmap.(srcixminv.(falsebackmap.(i))))) |], NewName.get ()), falseoutput.id, PortSingle vt) (
+			DG.addnode trueoutput (
+			DG.addnode falseoutput (
+			DG.addnode trueconj (
+			DG.addnode falseconj (
+			DG.addnode notnode (
+			DG.remnode n.id dg
+			)))))))))))))))
+		end
 		| _ -> None
 ;;
 

@@ -1,6 +1,7 @@
 open GrbGraphs;;
 open GrbInput;;
 
+(*
 let dbdesc =
 	RLMap.add "persons" 
 		(RLMap.add "id" VInteger (RLMap.add "name" VString (RLMap.add "dob" VInteger (RLMap.singleton "salary" VInteger))), [RLSet.singleton "id"])
@@ -15,6 +16,7 @@ let query =
 		RAFilter (RACartesian [RATable "persons"; RATable "events"],
 			RAXoper (OPIsEq, [RAXattribute "dob"; RAXattribute "year"])),
 		["id"; "name"; "eid"; "desc"]);;
+*)
 
 let aiddistrDbdesc =
 	RLMap.add "parameters"
@@ -47,7 +49,7 @@ let aiddistrQuery =
 					RACartesian [RATable "parameters"; renameTableCols [("name","ship.name")] "ship"; renameTableCols [("longitude", "port.longitude"); ("latitude", "port.latitude")] "port"],
 					"rp_arrival",
 					computearrival "latitude" "longitude" "port.latitude" "port.longitude" "speed" ),
-				RAXoper (OPAnd, [RAXoper (OPLessThan, [RAXattribute "rp_arrival"; RAXattribute "deadline"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"])])),
+				RAXoper (OPAnd, [RAXoper (OPLessEqual, [RAXattribute "rp_arrival"; RAXattribute "deadline"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"])])),
 			["port_id"; "rp_arrival"]) ,
 		RALetExp ("feasible_ports",
 			RAProject (
@@ -100,7 +102,7 @@ let aiddistrQuery =
 									RATable "parameters"
 								] ,
 								"offloadstart", RAXoper (OPITE, [RAXoper (OPLessThan, [RAXattribute "availslot.slotstart"; RAXattribute "rport.arrival"]); RAXattribute "rport.arrival"; RAXattribute "availslot.slotstart"])),
-							RAXoper (OPAnd, [RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "fport.port_id"]); RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "rport.port_id"]); RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "berth.port_id"]); RAXoper (OPIsEq, [RAXattribute "availslot.port_id"; RAXattribute "berth.port_id"]); RAXoper (OPIsEq, [RAXattribute "availslot.berth_id"; RAXattribute "berth.berth_id"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"]); RAXoper (OPNot, [RAXoper (OPLessThan, [RAXattribute "berth.berthlength"; RAXattribute "ship.length"])]); RAXoper (OPNot, [RAXoper (OPLessThan, [RAXattribute "deadline"; RAXattribute "rport.arrival"])]); RAXoper (OPNot, [RAXoper (OPLessThan, [RAXattribute "deadline"; RAXattribute "availslot.slotstart"])]); RAXoper (OPNot, [RAXoper (OPLessThan, [RAXattribute "availslot.slotend"; RAXoper (OPPlus, [RAXattribute "rport.arrival"; RAXattribute "port.offloadtime"])])]); RAXoper (OPNot, [RAXoper (OPLessThan, [RAXattribute "availslot.slotend"; RAXoper (OPPlus, [RAXattribute "availslot.slotstart"; RAXattribute "port.offloadtime"])])])])
+							RAXoper (OPAnd, [RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "fport.port_id"]); RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "rport.port_id"]); RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "berth.port_id"]); RAXoper (OPIsEq, [RAXattribute "availslot.port_id"; RAXattribute "berth.port_id"]); RAXoper (OPIsEq, [RAXattribute "availslot.berth_id"; RAXattribute "berth.berth_id"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"]); RAXoper (OPGreaterEqual, [RAXattribute "berth.berthlength"; RAXattribute "ship.length"]); RAXoper (OPGreaterEqual, [RAXattribute "deadline"; RAXattribute "rport.arrival"]); RAXoper (OPGreaterEqual, [RAXattribute "deadline"; RAXattribute "availslot.slotstart"]); RAXoper (OPGreaterEqual, [RAXattribute "availslot.slotend"; RAXoper (OPPlus, [RAXattribute "rport.arrival"; RAXattribute "port.offloadtime"])]); RAXoper (OPGreaterEqual, [RAXattribute "availslot.slotend"; RAXoper (OPPlus, [RAXattribute "availslot.slotstart"; RAXattribute "port.offloadtime"])])])
 						) ) ),
 						["port_id"; "berth_id"; "offloadstart"]),
 						RALetExp ("stepA",
