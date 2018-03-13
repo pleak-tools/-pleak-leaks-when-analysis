@@ -1,5 +1,43 @@
 open GrbGraphs;;
 
+let graphToTree dg n =
+	let changedg = ref DG.empty
+	in
+	let rec mkDeepCopy n =
+		let newn = {n with
+			id = NewName.get ();
+			inputs = PortMap.empty
+		}
+		in
+		changedg := DG.addnode newn !changedg;
+		DG.nodefoldedges (fun ((IxM cc, eid), _, prt) () ->
+			let Some (srcid, _, backmap) = cc.(0)
+			in
+			let src = DG.findnode srcid dg
+			in
+			let newsrcid = mkDeepCopy src
+			in
+			changedg := DG.addedge ((IxM [| Some (newsrcid, 0, backmap) |], NewName.get ()), newn.id, prt) !changedg
+		) n ();
+		newn.id
+	in
+	let newnid = mkDeepCopy n
+	in
+	let oc = open_out ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
+	in
+	GrbPrint.printgraph oc !changedg;
+	close_out oc;
+	let oc = open_out ("leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
+	in
+	let ewd = GrbCollectLeaks.dependencyOfAnOutput !changedg (DG.findnode newnid !changedg) None
+	in
+	GrbCollectLeaks.output_ewr oc (GrbCollectLeaks.translateEWD ewd);
+(*	output_string oc "\n\n\n";
+	GrbCollectLeaks.output_ewd oc ewd; *)
+	close_out oc;
+	(!changedg, newnid)
+;;
+
 let leaksAsGraphs dg =
 	DG.foldnodes (fun n () ->
 		if n.nkind.nodeintlbl = NNOutput then
@@ -16,7 +54,8 @@ let leaksAsGraphs dg =
 			let oc = open_out ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
 			in
 			GrbPrint.printgraph oc dg'';
-			close_out oc
+			close_out oc;
+			ignore (graphToTree dg'' n)
 		end
 		else ()
 	) dg ();;
