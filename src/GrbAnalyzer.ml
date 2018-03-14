@@ -23,13 +23,13 @@ let graphToTree dg n =
 	in
 	let newnid = mkDeepCopy n
 	in
+	let (ewd, gdns) = GrbCollectLeaks.dependencyOfAnOutput !changedg (DG.findnode newnid !changedg) None
+	in
 	let oc = open_out ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
 	in
-	GrbPrint.printgraph oc !changedg;
+	GrbPrint2.printgraph oc !changedg gdns;
 	close_out oc;
 	let oc = open_out ("leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
-	in
-	let ewd = GrbCollectLeaks.dependencyOfAnOutput !changedg (DG.findnode newnid !changedg) None
 	in
 	GrbCollectLeaks.output_ewr oc (GrbCollectLeaks.translateEWD ewd);
 (*	output_string oc "\n\n\n";
@@ -193,14 +193,14 @@ let analysis dg =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2straightened.dot"
+	let oc = open_out "finalgraph.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-	let oc = open_out "leakswhen.result"
+(*	let oc = open_out "leakswhen.result"
 	in
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
-	close_out oc;
+	close_out oc; *)
 	leaksAsGraphs dgstraightened
 ;;
 

@@ -323,6 +323,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 	and srcidbackmappl = ref None
 	and cntrlbackmappl = ref None
 	and vtpl = ref None
+	and globalDimNames = ref IdtMap.empty
 	in
 	DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
 		match prt with
@@ -425,6 +426,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 			(upBelowDims, !outdimspl, !exdimspl)
 			end
 	in
+	globalDimNames := IdtMap.add n.id nadimrec !globalDimNames;
 	let rec describeNode n alldims underNot =
 		let	(AITT b) = n.outputindextype
 		and (AITT a) = n.inputindextype
@@ -441,6 +443,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 		in
 		let (alldimsup, freshnewdims) = moveDimRecInsideNode alldims fwdmap a.(0)
 		in
+		globalDimNames := IdtMap.add n.id alldimsup !globalDimNames;
 		match n.nkind.nodeintlbl with
 			| NNTakeDim dimname ->
 				let dimid = IntMap.find 0 alldims
@@ -505,12 +508,17 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 					in
 					let srcdowndims = moveDimRecOverEdge alldimsup backmap
 					in
-					Some (dependencyOfAnOutput dg srcn (Some srcdowndims))
+					Some (
+						let (res, gdns) = dependencyOfAnOutput dg srcn (Some srcdowndims)
+						in
+						globalDimNames := IdtMap.merge (fun _ x y -> if x = None then y else x) !globalDimNames gdns;
+						res
+					)
 				) n None
 				in
 				let (AITT b) = n.outputindextype
 				in
-				((EWDAggregate (AGMakeBag, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r)), [freshnewdims])
+				((EWDAggregate (AGMakeBag, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r)), [ (* freshnewdims *) ])
 			| NNSeqNo ->
 				let (selectors, Some (r1, r2)) = DG.nodefoldedges (fun ((IxM cc, _), _, prt) (mm, rr) ->
 					let Some (srcid, _, backmap) = cc.(0)
@@ -560,12 +568,17 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 					in
 					let srcdowndims = moveDimRecOverEdge alldimsup backmap
 					in
-					Some (dependencyOfAnOutput dg srcn (Some srcdowndims))
+					Some (
+						let (res, gdns) = dependencyOfAnOutput dg srcn (Some srcdowndims)
+						in
+						globalDimNames := IdtMap.merge (fun _ x y -> if x = None then y else x) !globalDimNames gdns;
+						res
+					)
 				) n None
 				in
 				let (AITT b) = n.outputindextype
 				in
-				(EWDAggregate (agname, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r), [freshnewdims])
+				(EWDAggregate (agname, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r), [ (* freshnewdims *) ])
 			| NNOutput -> raise (Failure "Do not expect to see NNFilter at describeNode")
 			| NNOr ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
@@ -637,12 +650,12 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				r :: ll
 			) cntrl []
 		| _ -> [describeNode cntrl cbdimrec false]
-	in {
+	in ({
 		outputdims = outdims;
 		quantifieddims = joinDimLists (srcdims :: [exdims] :: (List.map snd cntrdesc));
 		outputthing = srcdesc;
 		outputconds = List.map fst cntrdesc;
-	}
+	}, !globalDimNames)
 ;;
 
 type expWithRows = EWRInput of string * NewName.idtype (* attribute name, table row ID. There's a map from ID-s to table names somewhere *)
@@ -810,7 +823,18 @@ let translateEWD ewd =
 		let extracond = IdtSet.fold (fun dimid ll ->
 			let checkList = IdtMap.find dimid dimParticipateInTables
 			in
-			List.fold_right (fun (_, tblid1, tblname1, dimname1) ll' ->
+			let outsideChosen = ref false
+			in
+			let selectedInps = List.fold_right (fun (_, tblid, tblname, dimname) ll' ->
+				if (IdtSet.mem tblid tablerows2) && ((IdtSet.mem tblid newTableRows) || (not !outsideChosen)) then begin
+					(if not (IdtSet.mem tblid newTableRows) then outsideChosen := true);
+					EWRInput (dimname, tblid) :: ll'
+				end else ll'
+			) checkList []
+			in
+			if ((List.length selectedInps) < 2) then ll
+			else (EWRCompute (OPIsEq, selectedInps)) :: ll
+			(*List.fold_right (fun (_, tblid1, tblname1, dimname1) ll' ->
 				List.fold_right (fun (_, tblid2, tblname2, dimname2) ll'' ->
 					if (tblid1 <> tblid2) && (IdtSet.mem tblid1 tablerows2) && (IdtSet.mem tblid2 tablerows2) &&
 						((IdtSet.mem tblid1 newTableRows) || (IdtSet.mem tblid2 newTableRows)) &&
@@ -818,8 +842,8 @@ let translateEWD ewd =
 						(EWRCompute (OPIsEq, [EWRInput (dimname1,tblid1); EWRInput (dimname2,tblid2)])) :: ll''
 					else ll''
 				) checkList ll'
-			) checkList ll
-		) consumedDims []
+			) checkList ll *)
+		) consdims2 []
 		in {
 			outputrows = outr;
 			quantifiedrows = quantr;
@@ -1022,12 +1046,24 @@ let translateEWD ewd =
 
 let output_ewr oc ewr =
 	let ftr = Format.formatter_of_out_channel oc
+	and shortIDs = Hashtbl.create 10
+	and nextID = ref 1
 	in
 	Format.pp_set_max_boxes ftr 0;
 	let rowDesc allTbls tblid =
 		let tblname = IdtMap.find tblid allTbls
 		in
-		tblname ^ "_" ^ (NewName.to_string tblid)
+		let tblShortId =
+			try
+				Hashtbl.find shortIDs tblid
+			with Not_found ->
+				(let res = !nextID
+				in
+				nextID := res + 1;
+				Hashtbl.add shortIDs tblid res;
+				res)
+		in
+		tblname ^ "_" ^ (string_of_int tblShortId)
 	in
 	let attrDesc allTbls tblid attrname = (rowDesc allTbls tblid) ^ "." ^ attrname
 	in
