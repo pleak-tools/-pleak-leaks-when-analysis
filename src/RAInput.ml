@@ -52,14 +52,16 @@ let aiddistrQuery =
 				RAXoper (OPAnd, [RAXoper (OPLessEqual, [RAXattribute "rp_arrival"; RAXattribute "deadline"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"])])),
 			["port_id"; "rp_arrival"]) ,
 		RALetExp ("feasible_ports",
+
 			RAProject (
 				RANewColumn (
 					RAFilter (
 						RACartesian [RARenameCol ("port_id", "rport.port_id", RATable "reachable_ports"); renameTableCols [("longitude", "port.longitude"); ("latitude", "port.latitude")] "port"; RARenameCol ("name", "ship.name", RATable "ship"); RATable "parameters"],
-						RAXoper (OPAnd, [RAXoper (OPIsEq, [RAXattribute "port_id"; RAXattribute "rport.port_id"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"])])),
+						RAXoper (OPAnd, [RAXoper (OPIsEq, [RAXattribute "port_id"; RAXattribute "rport.port_id"]); RAXoper (OPIsEq, [RAXattribute "ship.name"; RAXattribute "shipname"]); RAXattribute "available"; RAXoper (OPGreaterEqual, [RAXattribute "harbordepth"; RAXattribute "draft"]); RAXoper (OPGreaterEqual ,[RAXattribute "offloadcapacity"; RAXattribute "cargo"])])),
 						"fp_arrival" ,
 						computearrival "latitude" "longitude" "port.latitude" "port.longitude" "speed" ),
 				["port_id"; "name"; "fp_arrival"]),
+
 			RALetExp ("available_slots",
 				RAProject (
 					RALetExp ("slot1",
