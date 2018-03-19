@@ -449,7 +449,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				let dimid = IntMap.find 0 alldims
 				in
 				((if underNot && (n.nkind.outputtype = VBoolean) then EWDCompute (OPNot, [EWDTakeDim (dimid, dimname)]) else EWDTakeDim (dimid, dimname)), [])
-			| NNInput (tblcolname, vt) ->
+			| NNInput (tblcolname, vt, _) ->
 				let dotindex = String.index tblcolname '.'
 				in
 				let tblname = String.init dotindex (fun i -> tblcolname.[i])

@@ -60,7 +60,7 @@ let splitIndexTypes dg =
 		let (AITT a) = n.inputindextype
 		and (IxM m) = n.ixtypemap
 		in
-		let newInputIndices = Array.map (fun _ -> NewName.get ()) a
+		let newInputIndices = Array.mapi (fun x _ -> if x = 0 then n.id else NewName.get ()) a
 		in
 		let newindices = Array.mapi (fun idx -> function None -> raise (Failure "splitIndexTypes") | Some ((), x, _) -> (newInputIndices.(idx),newInputIndices.(x)) ) m
 		in
@@ -814,7 +814,99 @@ let iseqToDimEqNode dg n =
 	) newInps (DG.changenode nnew dg)
 ;;
 
-let iseqToDimEq dg = DG.foldnodes (fun nold dgcurr -> iseqToDimEqNode dgcurr (DG.findnode nold.id dgcurr)) dg dg;;
+let iseqAddDimEqNode dg n =
+	if n.nkind.nodeintlbl <> NNIsEq then dg else
+	let srcbackmappl = ref None
+	and srcnodepl = ref None
+	in
+	let hasUniqueInput = DG.nodefoldedges (fun ((IxM cc, _),_,_) bb ->
+		if bb then true else
+		let Some (srcid, _, backmap) = cc.(0)
+		in
+		let srcn = DG.findnode srcid dg
+		in
+		match srcn.nkind.nodeintlbl with
+			| NNInput (_, _, true) -> begin
+				srcbackmappl := Some backmap;
+				srcnodepl := Some srcn;
+				true
+				end
+			| _ -> false
+	) n false
+	in
+	if not hasUniqueInput then dg else
+	let Some srcn = !srcnodepl
+	and Some srcbackmap = !srcbackmappl
+	and intBackMap =
+		let (IxM nm) = n.ixtypemap
+		in
+		let Some ((), _, fwdmap) = nm.(0)
+		in
+		let res = Array.make (Array.length fwdmap) 0
+		in
+		for i = 0 to (Array.length fwdmap) - 1 do
+			res.(fwdmap.(i)) <- i
+		done;
+		res
+	in
+	let changedg = ref dg
+	in begin
+		DG.nodefoldoutedges dg (fun ((IxM cc1, eid1), nOutId1, _) () ->
+			let nOut = DG.findnode nOutId1.id !changedg
+			in
+			if nOut.nkind.nodeintlbl <> NNAnd then () else
+			let (AITT nOutA) = nOut.inputindextype
+			in
+			DG.nodefoldoutedges dg (fun ((IxM cc2, eid2), nOutId2, _) () ->
+				if (nOutId1.id = nOutId2.id) && ((NewName.to_string eid1) < (NewName.to_string eid2)) then
+				begin
+					let Some (_, _, obackmap1) = cc1.(0)
+					and Some (_, _, obackmap2) = cc2.(0)
+					in
+					let eqsListPre = Array.fold_right (fun ptr ll ->
+						let atnOut = intBackMap.(ptr)
+						in
+						let d1 = obackmap1.(atnOut)
+						and d2 = obackmap2.(atnOut)
+						in
+						if d1 = d2 then ll else
+						let (d1',d2') = if d1 < d2 then (d1,d2) else (d2,d1)
+						in
+						(d1',d2') :: ll
+					) srcbackmap []
+					in
+					let eqsList = List.sort_uniq Pervasives.compare eqsListPre
+					in
+					List.iter (fun (d1, d2) ->
+						let eqdimnodedims = AITT [| [| nOutA.(0).(d1); nOutA.(0).(d2) |] |]
+						in
+						let eqdimnode = {
+							nkind = nkDimEq;
+							id = NewName.get ();
+							inputs = PortMap.empty;
+							inputindextype = eqdimnodedims;
+							outputindextype = eqdimnodedims;
+							ixtypemap = identityIndexMap () eqdimnodedims;
+						}
+						in
+						changedg :=
+							DG.addedge ((IxM [| Some (eqdimnode.id, 0, [| d1; d2 |]) |], NewName.get ()), nOut.id, PortStrictB)
+							(DG.addnode eqdimnode !changedg)
+					) eqsList
+				end
+			) n ()
+		) n ();
+		!changedg
+	end
+;;
+	
+
+let iseqToDimEq dg = 
+	DG.foldnodes (fun nold dgcurr -> 
+		let dginterm = iseqToDimEqNode dgcurr (DG.findnode nold.id dgcurr)
+		in
+		iseqAddDimEqNode dginterm (DG.findnode nold.id dginterm)
+	) dg dg;;
 
 module ClassRepr = (
 struct
@@ -846,16 +938,7 @@ end : sig
 	val length : t -> int
 end);;
 
-let reduceOneAndDimension dg n =
-	if n.nkind.nodeintlbl <> NNAnd then None else
-	let (outpNodeIds, onlyOutputSuccs) = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) (currIds, currFlag) ->
-		if not currFlag then (IdtSet.empty, false) else
-		match tgtn.nkind.nodeintlbl, prt with
-			| NNOutput, PortSingleB -> (IdtSet.add tgtn.id currIds, true)
-			| _,_ -> (IdtSet.empty, false)
-	) n (IdtSet.empty, true)
-	in
-	if not onlyOutputSuccs then None else
+let collectReducedDims dg n =
 	let AITT a = n.inputindextype
 	in
 	let clmaparr = ClassRepr.make (Array.length a.(0))
@@ -874,137 +957,275 @@ let reduceOneAndDimension dg n =
 		(d1,d2) :: ll
 	) n []
 	in
-	if eqDimListPr = [] then None else
-	begin
 	List.iter (fun (v1,v2) -> ClassRepr.joinClasses clmaparr v1 v2) eqDimListPr;
-	let eqDimList = List.filter (fun (x,y) -> x <> y) (List.map (fun i -> (ClassRepr.getClass clmaparr i, i)) (intfromto 0 ((ClassRepr.length clmaparr) - 1)))
+	let eqDimList = List.filter (fun (x,y) -> x <> y) (List.map (fun i -> (ClassRepr.getClass clmaparr i, i)) (intfromto 0 ((ClassRepr.length clmaparr) - 1))) (* eqDimList is the list of pairs of to-be-joined dimensions at the input of the AND-node *)
+	in eqDimList
+;;
+
+
+let reduceOneAndDimension dg n =
+	if n.nkind.nodeintlbl <> NNAnd then None else
+	let (outpNodeIds, onlyOutputSuccs) = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) (currIds, currFlag) ->
+		if not currFlag then (IdtSet.empty, false) else
+		match tgtn.nkind.nodeintlbl, prt with
+			| NNOutput, PortSingleB -> (IdtSet.add tgtn.id currIds, true)
+			| _,_ -> (IdtSet.empty, false)
+	) n (IdtSet.empty, true)
 	in
-	let reducDimsNum = List.length eqDimList
-	and lostDims = IntSet.of_list (List.map snd eqDimList)
+	if not onlyOutputSuccs then None else
+	let AITT a = n.inputindextype
+	and eqDimList = collectReducedDims dg n
 	in
-	let survivingDimsNum = (Array.length a.(0)) - reducDimsNum
-	in
-	let equalDimsIxmap = Array.make survivingDimsNum 0
-	and outpixt = Array.make survivingDimsNum (NoValue, None)
-	in
-	let ii = ref 0
-	in
-	for i = 0 to ((Array.length equalDimsIxmap) - 1) do
-		while IntSet.mem !ii lostDims do
+	if eqDimList = [] then None else
+	begin
+		let reducDimsNum = List.length eqDimList
+		and lostDims = IntSet.of_list (List.map snd eqDimList)
+		in
+		let survivingDimsNum = (Array.length a.(0)) - reducDimsNum
+		in
+		let equalDimsIxmap = Array.make survivingDimsNum 0
+		and outpixt = Array.make survivingDimsNum (NoValue, None)
+		in
+		let ii = ref 0
+		in
+		for i = 0 to ((Array.length equalDimsIxmap) - 1) do
+			while IntSet.mem !ii lostDims do
+				ii := !ii + 1
+			done;
+			equalDimsIxmap.(i) <- !ii;
+			outpixt.(i) <- a.(0).(!ii);
 			ii := !ii + 1
 		done;
-		equalDimsIxmap.(i) <- !ii;
-		outpixt.(i) <- a.(0).(!ii);
-		ii := !ii + 1
-	done;
-	let genericDimReducer = {
-		nkind = nkEqualDims VBoolean eqDimList;
-		id = n.id;
-		inputs = PortMap.empty;
-		inputindextype = n.inputindextype;
-		outputindextype = AITT [| outpixt |];
-		ixtypemap = IxM [| Some ((), 0, equalDimsIxmap) |];
-	}
-	and newAndNode = {
-		nkind = nkAnd;
-		id = NewName.get ();
-		inputs = PortMap.empty;
-		inputindextype = AITT [| outpixt |];
-		outputindextype = AITT [| outpixt |];
-		ixtypemap = IxM [| Some ((), 0, Array.init survivingDimsNum (fun x -> x)) |];
-	}
-	and oldAndNode = {n with
-		nkind = nkId VBoolean;
-		inputs = PortMap.empty;
-	}
-	in
-	let reduceOutputNode dg0 nOut =
-		let controlEdgePl = ref None
-		and dataEdgePl = ref None
-		and dataEdgeTypePl = ref None
-		in
-		DG.nodefoldedges (fun ((IxM cc,_),_, prt) () ->
-			match prt with
-				| PortSingleB -> controlEdgePl := cc.(0)
-				| PortSingle vt -> (dataEdgePl := cc.(0); dataEdgeTypePl := Some vt)
-		) nOut ();
-		let Some (_, _, oldEdgeBM) = !controlEdgePl
-		and Some (srcid, _, dataEdgeBM) = !dataEdgePl
-		and Some dataVt = !dataEdgeTypePl
-		in
-		let (AITT aOut) = nOut.inputindextype
-		in
-		let liveDims = Array.make (Array.length aOut.(0)) false
-		in
-		Array.iter (fun oldIdx ->
-			liveDims.(oldEdgeBM.(oldIdx)) <- true
-		) equalDimsIxmap;
-		let oldToNewDims = Array.make (Array.length aOut.(0)) 0
-		in
-		let currNewDim = ref 0
-		in
-		for i = 0 to ((Array.length oldToNewDims) - 1) do
-			if liveDims.(i) then
-			begin
-				oldToNewDims.(i) <- !currNewDim;
-				currNewDim := !currNewDim + 1
-			end
-		done;
-		let newToOldDims = Array.make !currNewDim 0
-		in
-		for i = 0 to ((Array.length oldToNewDims) - 1) do
-			if liveDims.(i) then
-			begin
-				newToOldDims.(oldToNewDims.(i)) <- i
-			end
-		done;
-		let outpNodeEqDimList = List.map (fun (x,y) -> (oldEdgeBM.(x), oldEdgeBM.(y))) eqDimList
-		and thisOutpIxt = Array.init (Array.length newToOldDims) (fun i -> aOut.(0).(newToOldDims.(i)))
-		in
-		let dataDimReducer = {
-			nkind = nkEqualDims dataVt outpNodeEqDimList;
-			id = nOut.id;
-			inputindextype = nOut.inputindextype;
-			outputindextype = AITT [| thisOutpIxt  |];
+		let genericDimReducer = {
+			nkind = nkEqualDims VBoolean eqDimList;
+			id = n.id;
 			inputs = PortMap.empty;
-			ixtypemap = IxM [| Some ((), 0, newToOldDims) |];
+			inputindextype = n.inputindextype;
+			outputindextype = AITT [| outpixt |];
+			ixtypemap = IxM [| Some ((), 0, equalDimsIxmap) |];
 		}
-		and newOutpNode = {
-			nkind = nkOutput dataVt;
+		and newAndNode = {
+			nkind = nkAnd;
 			id = NewName.get ();
-			inputindextype = AITT [| thisOutpIxt |];
-			outputindextype = AITT [| thisOutpIxt |];
 			inputs = PortMap.empty;
-			ixtypemap = IxM [| Some ((), 0, Array.init (Array.length thisOutpIxt) (fun x -> x)) |];
+			inputindextype = AITT [| outpixt |];
+			outputindextype = AITT [| outpixt |];
+			ixtypemap = IxM [| Some ((), 0, Array.init survivingDimsNum (fun x -> x)) |];
+		}
+		and oldAndNode = {n with
+			nkind = nkId VBoolean;
+			inputs = PortMap.empty;
 		}
 		in
-(*		DG.addedge ((IxM [| Some (srcid, 0, Array.init (Array.length dataEdgeBM) (fun x -> oldToNewDims.(dataEdgeBM.(x)))) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (  *)
-		DG.addedge ((IxM [| Some (srcid, 0, dataEdgeBM) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (
-		DG.addedge ((IxM [| Some (newAndNode.id, 0, Array.init (Array.length outpixt) (fun x -> oldToNewDims.(oldEdgeBM.(equalDimsIxmap.(x))))) |], NewName.get()), newOutpNode.id, PortSingleB) (
-		DG.addedge ((IxM [| Some (dataDimReducer.id, 0, Array.init (Array.length thisOutpIxt) (fun x -> x)) |], NewName.get ()), newOutpNode.id, PortSingle dataVt) (
-		DG.addnode newOutpNode (
-		DG.addnode dataDimReducer dg0))))
-	in
-	(*let dg1 = DG.addedge ((IxM [| Some (newAndNode.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingle VBoolean) (DG.addnode newAndNode (DG.changenode oldAndNode dg)) *)
-	let dg1 = DG.addnode newAndNode dg
-	in
-	let dg2 = DG.nodefoldedges (fun ((cc, eid), _, _) dgcurr ->
-		let dimreducn = {genericDimReducer with id = NewName.get ();}
+		let reduceOutputNode dg0 nOut =
+			let controlEdgePl = ref None
+			and dataEdgePl = ref None
+			and dataEdgeTypePl = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc,_),_, prt) () ->
+				match prt with
+					| PortSingleB -> controlEdgePl := cc.(0)
+					| PortSingle vt -> (dataEdgePl := cc.(0); dataEdgeTypePl := Some vt)
+			) nOut ();
+			let Some (_, _, oldEdgeBM) = !controlEdgePl
+			and Some (srcid, _, dataEdgeBM) = !dataEdgePl
+			and Some dataVt = !dataEdgeTypePl
+			in
+			let (AITT aOut) = nOut.inputindextype
+			in
+			let liveDims = Array.make (Array.length aOut.(0)) false
+			in
+			Array.iter (fun oldIdx ->
+				liveDims.(oldEdgeBM.(oldIdx)) <- true
+			) equalDimsIxmap;
+			let oldToNewDims = Array.make (Array.length aOut.(0)) 0
+			in
+			let currNewDim = ref 0
+			in
+			for i = 0 to ((Array.length oldToNewDims) - 1) do
+				if liveDims.(i) then
+				begin
+					oldToNewDims.(i) <- !currNewDim;
+					currNewDim := !currNewDim + 1
+				end
+			done;
+			let newToOldDims = Array.make !currNewDim 0
+			in
+			for i = 0 to ((Array.length oldToNewDims) - 1) do
+				if liveDims.(i) then
+				begin
+					newToOldDims.(oldToNewDims.(i)) <- i
+				end
+			done;
+			let outpNodeEqDimList = List.map (fun (x,y) -> (oldEdgeBM.(x), oldEdgeBM.(y))) eqDimList
+			and thisOutpIxt = Array.init (Array.length newToOldDims) (fun i -> aOut.(0).(newToOldDims.(i)))
+			in
+			let dataDimReducer = {
+				nkind = nkEqualDims dataVt outpNodeEqDimList;
+				id = nOut.id;
+				inputindextype = nOut.inputindextype;
+				outputindextype = AITT [| thisOutpIxt  |];
+				inputs = PortMap.empty;
+				ixtypemap = IxM [| Some ((), 0, newToOldDims) |];
+			}
+			and newOutpNode = {
+				nkind = nkOutput dataVt;
+				id = NewName.get ();
+				inputindextype = AITT [| thisOutpIxt |];
+				outputindextype = AITT [| thisOutpIxt |];
+				inputs = PortMap.empty;
+				ixtypemap = IxM [| Some ((), 0, Array.init (Array.length thisOutpIxt) (fun x -> x)) |];
+			}
+			in
+(*			DG.addedge ((IxM [| Some (srcid, 0, Array.init (Array.length dataEdgeBM) (fun x -> oldToNewDims.(dataEdgeBM.(x)))) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (  *)
+			DG.addedge ((IxM [| Some (srcid, 0, dataEdgeBM) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (
+			DG.addedge ((IxM [| Some (newAndNode.id, 0, Array.init (Array.length outpixt) (fun x -> oldToNewDims.(oldEdgeBM.(equalDimsIxmap.(x))))) |], NewName.get()), newOutpNode.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (dataDimReducer.id, 0, Array.init (Array.length thisOutpIxt) (fun x -> x)) |], NewName.get ()), newOutpNode.id, PortSingle dataVt) (
+			DG.addnode newOutpNode (
+			DG.addnode dataDimReducer dg0))))
 		in
-		DG.addedge ((cc, NewName.get ()), dimreducn.id, PortSingle VBoolean)
-			(DG.addedge ((IxM [| Some (dimreducn.id, 0,  Array.init survivingDimsNum (fun x -> x))  |], NewName.get ()), newAndNode.id, PortStrictB)
-			(DG.addnode dimreducn dgcurr))
-	) n dg1
-	in
-	let dg3 = IdtSet.fold (fun onodeid dgcurr ->
-		let nOut = DG.findnode onodeid dgcurr
+		(*let dg1 = DG.addedge ((IxM [| Some (newAndNode.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingle VBoolean) (DG.addnode newAndNode (DG.changenode oldAndNode dg)) *)
+		let dg1 = DG.addnode newAndNode dg
 		in
-		reduceOutputNode dgcurr nOut
-	) outpNodeIds dg2
-	in
-	Some dg3
+		let dg2 = DG.nodefoldedges (fun ((cc, eid), _, _) dgcurr ->
+			let dimreducn = {genericDimReducer with id = NewName.get ();}
+			in
+			DG.addedge ((cc, NewName.get ()), dimreducn.id, PortSingle VBoolean)
+				(DG.addedge ((IxM [| Some (dimreducn.id, 0,  Array.init survivingDimsNum (fun x -> x))  |], NewName.get ()), newAndNode.id, PortStrictB)
+				(DG.addnode dimreducn dgcurr))
+		) n dg1
+		in
+		let dg3 = IdtSet.fold (fun onodeid dgcurr ->
+			let nOut = DG.findnode onodeid dgcurr
+			in
+			reduceOutputNode dgcurr nOut
+		) outpNodeIds dg2
+		in
+		Some dg3
 	end
 ;;
+
+(* TO BE ADDED BEGIN
+
+let reduceOneAndDimension dg n =
+	if n.nkind.nodeintlbl <> NNAnd then None else
+	if not onlyOutputSuccs then None else
+	let AITT a = n.inputindextype
+	and eqDimList = collectReducedDims dg n
+	in
+	if eqDimList = [] then None else
+	begin
+		let changedg = ref dg
+		in
+		let pushTogetherDims origLen eqDimsList =
+			let usedDims =
+				let res = Array.make origLen true
+				in
+				List.iter (fun (_,d) -> res.(d) <- false) eqDimsList;
+				res
+			in
+			let eqMap = 
+				let res = Array.init origLen (fun x -> x)
+				in
+				List.iter (fun (d1,d2) -> res.(d2) <- d1) eqDimsList;
+				res
+			in
+			let newLen = origLen - (List.length eqDimsList)
+			in
+			let oldToNew = Array.make (-1) origLen
+			and newToOld = Array.make 0 newLen
+			in
+			if origLen > 0 then
+			begin
+				let currPtr = ref 0
+				in
+				for i = 0 to (Array.length usedDims) - 1 do
+					if usedDims.(i) then
+					begin
+						oldToNew.(i) <- !currPtr;
+						currPtr := !currPtr + 1
+					end else
+						oldToNew.(i) <- oldToNew.(eqMap.(i))
+				done;
+				for i = 0 to (Array.length usedDims) - 1 do
+					if usedDims.(i) then
+						newToOld.(oldToNew.(i)) <- i
+				done
+			end;
+			(newLen, oldToNew, newToOld)
+		let pushTogetherMap srcOldLen srcNewLen tgtOldLen tgtNewLen srcOldToNew srcNewToOld tgtOldToNew tgtNewToOld oldMap =
+			Array.init srcNewLen (fun x -> tgtOldToNew.(oldMap.(srcNewToOld.(x))))
+		in
+		let pushEqDimsAlongAMap eqDimsList naLen nbLen pushMap =
+			let eqMap = 
+				let res = Array.init naLen (fun x -> x)
+				in
+				List.iter (fun (d1,d2) -> res.(d2) <- d1) eqDimsList;
+				res
+			in
+			let downEqList =
+				let res = ClassRepr.init nbLen
+				in
+				for d1 = 0 to (Array.length na0) - 1 do
+					for d2 = d1 + 1 to (Array.length na0) - 1 do
+						let dd1 = eqMap.(d1)
+						and dd2 = eqMap.(d2)
+						in
+						if dd1 = dd2 then
+						begin
+							let s1 = pushMap.(d1)
+							and s2 = pushMap.(d2)
+							in 
+							if (s1 <> -1) && (s2 <> -1) then
+								ClassRepr.joinClasses res s1 s2
+						end
+					done;
+				done;
+				let llres = ref []
+				in
+				for i = 0 to (ClassRepr.length res) - 1 do
+					let j = ClassRepr.getClass i
+					in
+					if i <> j then llres := (j,i) :: !llres
+				done;
+				!llres
+			in
+			downEqList
+		in
+		let pushEqDimsListDownNode n eqDimsList =
+			let (AITT a) = n.inputindextype
+			and (AITT b) = n.outputindextype
+			and (IxM mm) = n.ixtypemap
+			in
+			let na0 = a.(0)
+			and nb0 = b.(0)
+			and Some ((), _, fwdmap) = mm.(0)
+			in
+			let invFwdMap =
+				let res = Array.make (Array.length na0) (-1)
+				in
+				Array.iteri (fun idx ptr -> res.(ptr) <- idx) fwdmap;
+				res
+			in
+			pushEqDimsAlongAMap eqDimsList (Array.length na0) (Array.length nb0) invFwdMap
+		in
+		let pushEqDimsListDownEdge eqDimsList srcb0 tgta0 backmap =
+			pushEqDimsAlongAMap eqDimsList (Array.length srcb0) (Array.length tgta0) backmap
+		in
+		let rec updateNode nid eqDimsList addedEqDimsNodes incomingConnection =
+			let n = DG.findnode nid !changedg
+			in
+			let downEqDimsList = pushEqDimsListDownNode n eqDimsList
+			in
+			
+
+
+	end
+;;
+
+WILL CONTINUE WHEN THE DELIVERABLE HAS BEEN WRITTEN
+
+TO BE ADDED END *)
 
 let reduceAndDimension dg = DG.foldnodes (fun nold dgcurr -> match reduceOneAndDimension dgcurr (DG.findnode nold.id dgcurr) with None -> dgcurr | Some dg' -> dg') dg dg;;
 

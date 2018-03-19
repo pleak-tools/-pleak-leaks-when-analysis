@@ -497,7 +497,7 @@ let string_of_aggrname = function
 
 type nodename = 
 | NNTakeDim of string
-| NNInput of string * valuetype
+| NNInput of string * valuetype * bool
 | NNInputExists of string
 | NNId
 | NNAnd
@@ -655,7 +655,7 @@ type nodetype = {
   ixtypemap : indexmaptype;
 };;
 
-let nkInput vt inpname = {
+let nkInput vt inpname isUnique = {
   contracts = false;
   makesbottom = false;
   inadvview = false;
@@ -663,8 +663,8 @@ let nkInput vt inpname = {
   nofail = false;
   ports = PortSet.empty;
   outputtype = vt;
-  nodeintlbl = NNInput (inpname,vt);
-  nodelabel = (fun _ -> "Input " ^ inpname);
+  nodeintlbl = NNInput (inpname,vt,isUnique);
+  nodelabel = (fun _ -> "Input" ^ (if isUnique then "(U)" else "") ^ " " ^ inpname);
   nodecolor = (192,128,0);
   nodetextcolor = (0,0,0);
   boldborder = true;

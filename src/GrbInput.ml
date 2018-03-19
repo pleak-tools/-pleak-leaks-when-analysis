@@ -104,8 +104,11 @@ let (makeinputnodes : dbdescriptiontype -> DG.t * dblocationtype) = fun dbdesc -
       }
       end
       else
+      let isUniqueInput = 
+      	List.exists (fun tblidx -> tblidx = RLSet.singleton colname) tblindices
+      in
       {
-      	nkind = nkInput cval (tblname ^ "." ^ colname);
+      	nkind = nkInput cval (tblname ^ "." ^ colname) isUniqueInput;
       	id = newid;
       	inputs = PortMap.empty;
       	inputindextype = tblindextype;
