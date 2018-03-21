@@ -1,6 +1,6 @@
 open GrbGraphs;;
 
-let graphToTree dg n =
+let graphToTree dg n resultdir =
 	let changedg = ref DG.empty
 	in
 	let rec mkDeepCopy n =
@@ -29,7 +29,7 @@ let graphToTree dg n =
 	in
 	GrbPrint2.printgraph oc !changedg gdns;
 	close_out oc;
-	let oc = open_out ("leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
+	let oc = open_out (resultdir ^ "/leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
 	in
 	GrbCollectLeaks.output_ewr oc (GrbCollectLeaks.translateEWD ewd);
 (*	output_string oc "\n\n\n";
@@ -38,7 +38,7 @@ let graphToTree dg n =
 	(!changedg, newnid)
 ;;
 
-let leaksAsGraphs dg =
+let leaksAsGraphs dg resultdir =
 	DG.foldnodes (fun n () ->
 		if n.nkind.nodeintlbl = NNOutput then
 		begin
@@ -55,12 +55,30 @@ let leaksAsGraphs dg =
 			in
 			GrbPrint.printgraph oc dg'';
 			close_out oc;
-			ignore (graphToTree dg'' n)
+			ignore (graphToTree dg'' n resultdir)
 		end
 		else ()
 	) dg ();;
 
 let analysis dg =
+	if (Array.length Sys.argv) < 2 then
+	begin
+		print_string ("Usage: " ^ Sys.executable_name ^ " folder_for_result_files\n");
+		exit 1
+	end;
+	let resultfolder = Sys.argv.(1)
+	in
+	(try
+		if Sys.is_directory resultfolder then () else
+		begin
+			print_string (resultfolder ^ " is not a folder\n");
+			exit 1
+		end
+	with Sys_error _ -> begin
+			print_string (resultfolder ^ " does not exist\n");
+			exit 1
+		end
+	);
 	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
@@ -201,6 +219,6 @@ let analysis dg =
 	in
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
-	leaksAsGraphs dgstraightened
+	leaksAsGraphs dgstraightened resultfolder;
 ;;
 
