@@ -40,10 +40,10 @@ let graphToTree dg n resultdir =
 
 let leaksAsGraphs dg resultdir =
 	DG.foldnodes (fun n () ->
-		if n.nkind.nodeintlbl = NNOutput then
+		if (match n.nkind.nodeintlbl with NNOutput _ -> true | _ -> false) then
 		begin
 			let dg' = DG.foldnodes (fun n' dgcurr ->
-				if (n'.nkind.nodeintlbl = NNOutput) && (n.id <> n'.id) then
+				if (match n'.nkind.nodeintlbl with NNOutput _ -> true | _ -> false) && (n.id <> n'.id) then
 					DG.remnode n'.id dgcurr
 				else
 					dgcurr
@@ -59,6 +59,34 @@ let leaksAsGraphs dg resultdir =
 		end
 		else ()
 	) dg ();;
+
+let makeLegend dg resultdir =
+	let rescoll = DG.foldnodes (fun n m ->
+		match n.nkind.nodeintlbl with
+			| NNOutput outp ->
+				RLSet.fold (fun outstr mm ->
+					let s = try RLMap.find outstr mm with Not_found -> IdtSet.empty
+					in
+					RLMap.add outstr (IdtSet.add n.id s) mm
+				) outp m
+			| _ -> m
+	) dg RLMap.empty
+	in
+	let oc = open_out (resultdir ^ "/legend")
+	in
+	output_string oc "{\n";
+	RLMap.iter (fun outpname resnodes ->
+		let fnames = List.map (fun nid -> "\"leakage_from_" ^ (NewName.to_string nid) ^ ".result\"") (IdtSet.elements resnodes)
+		in
+		output_string oc "  \"";
+		output_string oc outpname;
+		output_string oc "\": [";
+		output_string oc (String.concat ", " fnames);
+		output_string oc "]\n"
+	) rescoll;
+	output_string oc "}\n";
+	close_out oc
+;;
 
 let analysis dg =
 	if (Array.length Sys.argv) < 2 then
@@ -220,5 +248,6 @@ let analysis dg =
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
 	leaksAsGraphs dgstraightened resultfolder;
+	makeLegend dgstraightened resultfolder
 ;;
 

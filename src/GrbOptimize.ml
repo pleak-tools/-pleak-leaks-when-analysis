@@ -616,7 +616,9 @@ let simplifyAddition dg n =
 ;;
 
 let dontOutputNulls dg n =
-	if n.nkind.nodeintlbl <> NNOutput then None else
+	if (match n.nkind.nodeintlbl with NNOutput _ -> false | _ -> true) then None else
+	let NNOutput inputDescription = n.nkind.nodeintlbl
+	in
 	let srcidpl = ref None
 	and cntrlpl = ref None
 	and srcidbackmappl = ref None
@@ -699,8 +701,8 @@ let dontOutputNulls dg n =
 			}
 			in
 			let falseconj = { trueconj with id = NewName.get (); }
-			and trueoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt; }
-			and falseoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt; }
+			and trueoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt inputDescription; }
+			and falseoutput = { trueconj with id = NewName.get (); nkind = nkOutput vt inputDescription; }
 			in
 			let IxM srccc = src.ixtypemap
 			and AITT srca = src.inputindextype
@@ -965,12 +967,12 @@ let collectReducedDims dg n =
 
 let reduceOneAndDimension dg n =
 	if n.nkind.nodeintlbl <> NNAnd then None else
-	let (outpNodeIds, onlyOutputSuccs) = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) (currIds, currFlag) ->
-		if not currFlag then (IdtSet.empty, false) else
+	let (outpNodeIds, onlyOutputSuccs, inputDescription) = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) (currIds, currFlag, currIDesc) ->
+		if not currFlag then (IdtSet.empty, false, RLSet.empty) else
 		match tgtn.nkind.nodeintlbl, prt with
-			| NNOutput, PortSingleB -> (IdtSet.add tgtn.id currIds, true)
-			| _,_ -> (IdtSet.empty, false)
-	) n (IdtSet.empty, true)
+			| NNOutput iDesc, PortSingleB -> (IdtSet.add tgtn.id currIds, true, RLSet.union iDesc currIDesc)
+			| _,_ -> (IdtSet.empty, false, RLSet.empty)
+	) n (IdtSet.empty, true, RLSet.empty)
 	in
 	if not onlyOutputSuccs then None else
 	let AITT a = n.inputindextype
@@ -1069,7 +1071,7 @@ let reduceOneAndDimension dg n =
 				ixtypemap = IxM [| Some ((), 0, newToOldDims) |];
 			}
 			and newOutpNode = {
-				nkind = nkOutput dataVt;
+				nkind = nkOutput dataVt inputDescription;
 				id = NewName.get ();
 				inputindextype = AITT [| thisOutpIxt |];
 				outputindextype = AITT [| thisOutpIxt |];
@@ -1618,7 +1620,7 @@ let findPotentiallyEqualDims dg n =
 	dimclass;;
 
 let removeOneOutputControlDims dg n allDimclass =
-	if (match n.nkind.nodeintlbl with NNOutput -> false | _ -> true) then dg else
+	if (match n.nkind.nodeintlbl with NNOutput _ -> false | _ -> true) then dg else
 	let controlEdgePl = ref None
 	and controlEdgeIdPl = ref None
 	and dataEdgePl = ref None

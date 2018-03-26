@@ -133,7 +133,8 @@ let aiddistrQuery =
 											RAXoper (OPAnd, [RAXoper (OPIsEq, [RAXattribute "port.port_id"; RAXattribute "assign.port_id"]); RAXoper (OPIsEq, [RAXattribute "assign.port_id"; RAXattribute "rport.port_id"])])
 										) ,
 										["assign.port_id"; "stepC.portname"; "berth_id"; "rp_arrival"; "offloadstart"; "offloadtime"] ),
-									RAUnionWithDifferentSchema (RAUnionWithDifferentSchema (RATable "stepA", RATable "stepB"), RATable "stepC")
+									RAUnionWithDifferentSchema (RAUnionWithDifferentSchema (RATable "stepA", RATable "stepB"), RATable "stepC")  
+(*									RATable "stepB" *)
 								)
 							)
 						)

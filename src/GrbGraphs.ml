@@ -509,7 +509,7 @@ type nodename =
 | NNFilter of valuetype
 | NNOperation of operationname
 | NNAggregate of aggregationname
-| NNOutput
+| NNOutput of RLSet.t (* description of where this output came from *)
 | NNOr
 | NNTrue
 | NNFalse
@@ -700,7 +700,7 @@ let nkTakeDim enteridx cval = {
   boldborder = true;
 };;
 
-let nkOutput cval = {
+let nkOutput cval inpdesc = {
   contracts = false;
   makesbottom = false;
   inadvview = true;
@@ -708,8 +708,8 @@ let nkOutput cval = {
   nofail = false;
   ports = PortSet.from_list [PortSingleB; PortSingle cval];
   outputtype = NoValue;
-  nodeintlbl = NNOutput;
-  nodelabel = (fun _ -> "Output");
+  nodeintlbl = NNOutput inpdesc;
+  nodelabel = (fun _ -> "Out[" ^ (String.concat ", " (RLSet.elements inpdesc)) ^ "]");
   nodecolor = (192,128,0);
   nodetextcolor = (0,0,0);
   boldborder = true;

@@ -86,7 +86,7 @@ let rec describeDependency dg n =
 		| NNMakeBag _
 		| NNAggregate AGMakeBag
 		| NNFilter _
-		| NNOutput ->
+		| NNOutput _ ->
 			let inputdescPl = ref None
 			and controldescPl = ref ""
 			in
@@ -263,16 +263,16 @@ and describeCondition dg n =
 			let desc = collectInputDescs ()
 			in
 			"If " ^ (PortMap.find PortSingleB desc) ^ " then " ^ (PortMap.find (PortTrue vt) desc) ^ " else " ^ (PortMap.find (PortFalse vt) desc)
-		| NNOutput -> ""
+		| NNOutput _ -> ""
 ;;
 
 let describeAllDependencies oc dg =
 	DG.foldnodes (fun n () ->
 		match n.nkind.nodeintlbl with
-			| NNOutput ->
+			| NNOutput inputDescription ->
 				let deps = describeDependency dg n
 				in
-				output_string oc ("Output no. " ^ (NewName.to_string n.id));
+				output_string oc ("Output no. " ^ (NewName.to_string n.id) ^ " for the input(s) " ^ (String.concat ", " (RLSet.elements inputDescription)));
 				List.iter (fun (s1,s2) ->
 					output_string oc "\n*. ";
 					output_string oc s1;
@@ -317,7 +317,7 @@ let rec joinDimLists dl =
 ;;
 
 let rec dependencyOfAnOutput dg n incomingDimNames =
-	if (n.nkind.nodeintlbl <> NNOutput) && (match n.nkind.nodeintlbl with NNFilter _ -> false | _ -> true) then raise (Failure "dependencyOfAnOutput called for non-NNOutput or non-NNFilter node") else
+	if (match n.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> false | _ -> true) then raise (Failure "dependencyOfAnOutput called for non-NNOutput or non-NNFilter node") else
 	let srcidpl = ref None
 	and cntrlpl = ref None
 	and srcidbackmappl = ref None
@@ -579,7 +579,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				let (AITT b) = n.outputindextype
 				in
 				(EWDAggregate (agname, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r), [ (* freshnewdims *) ])
-			| NNOutput -> raise (Failure "Do not expect to see NNFilter at describeNode")
+			| NNOutput _ -> raise (Failure "Do not expect to see NNOutput at describeNode")
 			| NNOr ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
 					let Some (srcid, _, backmap) = cc.(0)
