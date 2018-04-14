@@ -1702,3 +1702,9 @@ let removeOutputControlDims dg =
 	DG.foldnodes (fun n dgcurr -> removeOneOutputControlDims dgcurr n allDimclass) dg dg
 ;;
 
+(*
+let mkSingleOutputPerComp dg n =
+	
+
+let singleOutputPerValue dg =
+*)

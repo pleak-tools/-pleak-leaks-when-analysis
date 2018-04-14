@@ -291,6 +291,68 @@ struct
 end
 );;
 
+type 'a andortree = AOTElem of 'a | AOTAnd of (('a andortree) list) | AOTOr of (('a andortree) list);;
+
+let rec normalizeAOT wholeTree = match wholeTree with
+	| AOTElem x -> AOTElem x
+	| AOTAnd ll | AOTOr ll ->
+		let isAnd = (match wholeTree with AOTAnd _ -> true | _ -> false)
+		in
+		let llnew = List.map normalizeAOT ll
+		in
+		let rec flattenLL = function
+			| [] -> Some []
+			| x :: xs ->
+				let flatXSOpt = flattenLL xs
+				in
+				(match flatXSOpt with
+					| None -> None
+					| Some flatXS ->
+						(match x,wholeTree with
+							| AOTAnd inner, AOTAnd _
+							| AOTOr inner, AOTOr _ ->
+								Some (List.append inner flatXS)
+							| AOTOr [], AOTAnd _
+							| AOTAnd [], AOTOr _ -> None
+							| _,_ -> Some (x :: flatXS)
+				))
+		in
+		let res = (match (flattenLL llnew) with
+			| Some x -> 
+				let y = List.sort_uniq Pervasives.compare x
+				in 
+				if (List.length y) = 1 then List.hd y else
+				if isAnd then AOTAnd y else AOTOr y
+			| None -> if isAnd then AOTOr [] else AOTAnd []
+		)
+		in res
+;;
+
+let rec mapFOnAOT f wholeTree =
+	match wholeTree with
+		| AOTAnd ll -> AOTAnd (List.map (mapFOnAOT f) ll)
+		| AOTOr ll -> AOTOr (List.map (mapFOnAOT f) ll)
+		| AOTElem x ->
+			let wt = f x
+			in
+			(match wt with
+				| AOTElem _ -> wt
+				| _ -> mapFOnAOT f wt
+			)
+;;
+
+let rec foldOnAOT op_and op_or op_elem = function
+	| AOTAnd ll ->
+		op_and (List.map (foldOnAOT op_and op_or op_elem) ll)
+	| AOTOr ll ->
+		op_or (List.map (foldOnAOT op_and op_or op_elem) ll)
+	| AOTElem x -> op_elem x
+;;
+
+let iterOnAOT on_elem = foldOnAOT (fun _ -> ()) (fun _ -> ()) on_elem;;
+
+let mapOnAOT f = foldOnAOT (fun l -> AOTAnd l) (fun l -> AOTOr l) (fun x -> AOTElem (f x));;
+
 type expWithDims = EWDInput of string * string * (string IdtMap.t)	(* table name, attribute name, dims *)
 				 | EWDExists of string * (string IdtMap.t)			(* table name, dims *)
 				 | EWDCompute of operationname * expWithDims list
@@ -301,7 +363,7 @@ and outputdescdimstype = {
 	outputdims : string IdtMap.t;
 	quantifieddims : string IdtMap.t list; (* the head is "exists" *)
 	outputthing : expWithDims;
-	outputconds : expWithDims list;
+	outputconds : expWithDims andortree;
 };;
 
 let rec joinDimLists dl =
@@ -654,7 +716,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 		outputdims = outdims;
 		quantifieddims = joinDimLists (srcdims :: [exdims] :: (List.map snd cntrdesc));
 		outputthing = srcdesc;
-		outputconds = List.map fst cntrdesc;
+		outputconds = AOTAnd (List.map (fun (x,_) -> AOTElem x) cntrdesc);
 	}, !globalDimNames)
 ;;
 
@@ -667,7 +729,7 @@ and outputdescrowstype = {
 	outputrows : string IdtMap.t; (* maps ID-s to table names *)
 	quantifiedrows : string IdtMap.t list; (* the head is "exists" *)
 	r_outputthing : expWithRows;
-	r_outputconds : expWithRows list;
+	r_outputconds : expWithRows andortree;
 };;
 
 let translateEWD ewd =
@@ -704,7 +766,7 @@ let translateEWD ewd =
 		in
 		let rec collectTableRowsFromEWD ewd =
 			collectTableRowsFromExpr ewd.outputthing;
-			List.iter collectTableRowsFromExpr ewd.outputconds
+			iterOnAOT collectTableRowsFromExpr ewd.outputconds
 		and collectTableRowsFromExpr expr = match expr with
 			| EWDInput (tblname, _, dimset) -> ignore (addTblRow tblname dimset)
 			| EWDExists (tblname, dimset) -> ignore (addTblRow tblname dimset)
@@ -718,7 +780,7 @@ let translateEWD ewd =
 	let checkAllTakeDims () =
 		let rec checkTakeDimsEWD ewd =
 			checkTakeDimsExpr ewd.outputthing;
-			List.iter checkTakeDimsExpr ewd.outputconds
+			iterOnAOT checkTakeDimsExpr ewd.outputconds
 		and checkTakeDimsExpr expr =
 			let considerEntry dimid attrname =
 				let tblattrset = try IdtMap.find dimid !dimToRow with Not_found -> IdtNameSet.empty
@@ -818,7 +880,7 @@ let translateEWD ewd =
 		let tablerows2 = IdtSet.union createdTables newTableRows
 		in
 		let r_outth = reallyTranslateExpr consdims2 tablerows2 ewd.outputthing
-		and r_outcond = List.map (reallyTranslateExpr consdims2 tablerows2) ewd.outputconds
+		and r_outcond = mapOnAOT (reallyTranslateExpr consdims2 tablerows2) ewd.outputconds
 		in
 		let extracond = IdtSet.fold (fun dimid ll ->
 			let checkList = IdtMap.find dimid dimParticipateInTables
@@ -844,11 +906,26 @@ let translateEWD ewd =
 				) checkList ll'
 			) checkList ll *)
 		) consdims2 []
+		in
+		let mkAOTNormal whTree =
+			let splitComp = function
+				| EWRCompute (OPAnd, ll) -> AOTAnd (List.map (fun x -> AOTElem x) ll)
+				| EWRCompute (OPOr, ll) -> AOTOr (List.map (fun x -> AOTElem x) ll)
+				| otherComp -> AOTElem otherComp
+			in
+			normalizeAOT (mapFOnAOT splitComp whTree)
+		and clearExists whTree =
+			let rmExists = function
+				| EWRExists _ -> AOTAnd []
+				| EWRCompute (OPNot, [EWRExists _]) -> AOTOr []
+				| otherComp -> AOTElem otherComp
+			in
+			normalizeAOT (mapFOnAOT rmExists whTree)
 		in {
 			outputrows = outr;
 			quantifiedrows = quantr;
 			r_outputthing = r_outth;
-			r_outputconds = List.append r_outcond extracond;
+			r_outputconds = clearExists (mkAOTNormal (AOTAnd (r_outcond :: (List.map (fun x -> AOTElem x) extracond))));
 		}
 	and reallyTranslateExpr consdimspass consrowspass expr = match expr with
 		| EWDInput (tblname, attrname, dimset) ->
@@ -1078,6 +1155,30 @@ let output_ewr oc ewr =
 	let outputListofSmth argList elemPrinter =
 		outputListofSmthWithSep argList elemPrinter (fun () -> Format.pp_print_string ftr ","; Format.pp_print_space ftr ())
 	in
+	let rec outputAOT argTree elemPrinter =
+		match argTree with
+			| AOTElem x -> elemPrinter x
+			| AOTAnd ll -> begin
+				Format.pp_print_string ftr "{";
+				Format.pp_print_space ftr ();
+				Format.pp_open_box ftr 2;
+				outputListofSmthWithSep ll (fun y -> outputAOT y elemPrinter)
+					(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "AND"; Format.pp_print_space ftr ());
+				Format.pp_print_space ftr ();
+				Format.pp_close_box ftr ();
+				Format.pp_print_string ftr "}"
+			end
+			| AOTOr ll -> begin
+				Format.pp_print_string ftr "{";
+				Format.pp_print_space ftr ();
+				Format.pp_open_box ftr 2;
+				outputListofSmthWithSep ll (fun y -> outputAOT y elemPrinter)
+					(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "OR"; Format.pp_print_space ftr ());
+				Format.pp_print_space ftr ();
+				Format.pp_close_box ftr ();
+				Format.pp_print_string ftr "}"
+			end
+	in
 	let rec doOutputEWR oldTables ewr =
 		let allTables = IdtMap.merge (fun _ x y -> if x = None then y else x)
 			(List.fold_right (fun oneMap currMap ->
@@ -1110,12 +1211,11 @@ let output_ewr oc ewr =
 			Format.pp_print_string ftr "Output expression:";
 			Format.pp_print_space ftr ();
 			doOutputExpr allTables ewr.r_outputthing;
+			Format.pp_print_space ftr ();
 			Format.pp_print_break ftr 0 1;
 			Format.pp_print_string ftr "If the following holds:";
 			Format.pp_print_space ftr ();
-			outputListofSmthWithSep ewr.r_outputconds
-				(fun r_ot -> doOutputExpr allTables r_ot)
-				(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "AND"; Format.pp_print_space ftr ());
+			outputAOT ewr.r_outputconds	(fun r_ot -> doOutputExpr allTables r_ot);
 		Format.pp_close_box ftr ()
 	and doOutputExpr allTbls = function
 		| EWRInput (attrname, tblid) -> begin
@@ -1177,6 +1277,217 @@ let output_ewr oc ewr =
 	Format.pp_print_flush ftr ();
 ;;
 
+let rec permutations ll =
+	let ins_all_positions x l =  
+	  let rec aux prev acc = function
+	    | [] -> (prev @ [x]) :: acc |> List.rev
+	    | hd::tl as l -> aux (prev @ [hd]) ((prev @ [x] @ l) :: acc) tl
+	  in
+	  aux [] [] l
+	in
+	match ll with
+	  | [] -> [[]]
+	  | x::[] -> [[x]]
+	  | x::xs -> List.fold_left (fun acc p -> acc @ ins_all_positions x p ) [] (permutations xs)
+;;
+
+
+let output_ewr_to_graph oc ewr =
+	let rec compareEWRs idEquiv ewr1 ewr2 = match ewr1, ewr2 with
+		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
+		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2
+		| EWRCompute (op1, ll1), EWRCompute (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRSeqNo (sidl1, c1), EWRSeqNo (sidl2, c2) -> (compareEWRs idEquiv c1 c2) && (List.for_all2 (fun (s1,id1) (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)) sidl1 sidl2)
+		| EWRAggregate (ag1, ins1, od1), EWRAggregate (ag2, ins2, od2) ->
+			let res =
+			(ag1 = ag2) &&
+			(List.exists (fun insl2 -> List.for_all2 (fun (id1,s1) (id2,s2) -> (s1 = s2) && (idEquiv id1 id2)) (IdtNameSet.elements ins1) insl2) (permutations (IdtNameSet.elements ins2))) &&
+			((List.length od1.quantifiedrows) = (List.length od2.quantifiedrows)) &&
+			(IdtMap.cardinal od1.outputrows = IdtMap.cardinal od2.outputrows) &&
+			(List.for_all2 (fun m1 m2 -> IdtMap.cardinal m1 = IdtMap.cardinal m2) od1.quantifiedrows od2.quantifiedrows) &&
+			(
+				let or1l = IdtMap.bindings od1.outputrows
+				and qr1ll = List.map IdtMap.bindings od1.quantifiedrows
+				and or2lp = permutations (IdtMap.bindings od2.outputrows)
+				and qr2lpl = List.map (fun x -> permutations (IdtMap.bindings x)) od2.quantifiedrows
+				in
+				List.exists (fun or2l ->
+					let idEqN1 id1 id2 = (idEquiv id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) or1l or2l)
+					in
+					let rec selectElem currIdEq currQR1ll currQR2lpl = match currQR1ll, currQR2lpl with
+						| [], [] -> (compareEWRs currIdEq od1.r_outputthing od2.r_outputthing) && (compareEWRAOTs currIdEq od1.r_outputconds od2.r_outputconds)
+						| (z1::z1s), (z2p::z2ps) -> List.exists (fun z2 ->
+							let nextIdEq id1 id2 = (currIdEq id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) z1 z2)
+							in
+							selectElem nextIdEq z1s z2ps
+						) z2p
+					in
+					selectElem idEqN1 qr1ll qr2lpl
+				) or2lp
+			)
+			in
+			res
+		| _,_ -> false	
+	and compareEWRAOTs idEquiv aot1 aot2 = match aot1, aot2 with
+		| AOTAnd ll1, AOTAnd ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTOr ll1, AOTOr ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTElem e1, AOTElem e2 -> compareEWRs idEquiv e1 e2
+		| _, _ -> false
+	in
+	let ewridtbl = Hashtbl.create 10
+	and rowidtbl = Hashtbl.create 10
+	in
+	let getRowId rid =
+		try
+			(Hashtbl.find rowidtbl rid, true)
+		with Not_found -> begin
+			let nid = NewName.get ()
+			in
+			Hashtbl.add rowidtbl rid nid;
+			(nid, false)
+		end
+	and getEWRId ewr =
+		let phid = Hashtbl.fold (fun ewr' ewid res ->
+			match res with
+				| Some _ -> res
+				| None -> if compareEWRs (=) ewr ewr' then Some ewid else None
+		) ewridtbl None
+		in
+		match phid with
+			| Some x -> (x, true)
+			| None -> (
+				let nid = NewName.get ()
+				in
+				Hashtbl.add ewridtbl ewr nid;
+				(nid, false))
+	in
+	output_string oc "digraph {\n";
+	let dotnodeid x = "v_" ^ (NewName.to_string x)
+	in
+	let rec doOutputEWR ewr =
+		let (nid, alreadyIn) = getEWRId ewr
+		in
+		if alreadyIn then nid else
+		(begin
+			match ewr with
+			| EWRInput (attrname, tblid) ->
+				let grrowid = doOutputRow false false tblid ""
+				in
+				(
+					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ attrname ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid grrowid) ^ " -> " ^ (dotnodeid nid) ^ ";\n")
+				)
+			| EWRExists _ -> ()
+			| EWRCompute (opname, ll) ->
+				let upl = List.map doOutputEWR ll
+				in
+				let nodelbl, numberinps = (match opname with
+					| OPPlus -> "+", false
+					| OPNeg -> "-", false
+					| OPMult -> "*", false
+					| OPIsEq -> "=", false
+					| OPLessThan -> "\\<", true
+					| OPLessEqual -> "&#8804;", true
+					| OPGreaterThan -> "\\>", true
+					| OPGreaterEqual -> "&#8805;", true
+					| OPAnd -> "AND", false
+					| OPOr -> "OR", false
+					| OPNot -> "NOT", false
+					| OPDiv -> "&#247;", true
+					| OPIntConst c -> (string_of_int c), false
+					| OPStringConst s -> s, false
+					| OPRealConst ff -> (string_of_float ff), false
+					| OPBoolConst bb -> (string_of_bool bb), false
+					| OPNull _ -> "NULL", false
+					| OPGeoDist -> "&#916;", true
+					| OPCeiling -> "ceil", false
+					| OPCoalesce -> "coalesce", true
+					| OPITE -> "?:", true
+					| OPTuple strl -> ("[" ^ (String.concat "," strl) ^"]"), true
+					| OPProject prname -> ("&#960;" ^ prname), false
+				)
+				in
+				(
+					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					List.iteri (fun ifx upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid));
+						(if numberinps then output_string oc (" [label=" ^ (string_of_int (ifx+1)) ^ "]"));
+						output_string oc ";\n"
+					) upl
+				)
+			| EWRAggregate (agn, remaindims, ewstr) ->
+				let nodelbl = string_of_aggrname agn
+				in
+				let insideid = doOutputStruct ewstr false
+				and groupids = List.map (fun (tblid, attrname) -> doOutputEWR (EWRInput (attrname, tblid))) (IdtNameSet.elements remaindims)
+				in
+				let gbid = NewName.get ()
+				in
+				(
+					output_string oc ((dotnodeid gbid) ^ " [shape=box label=\"GROUP BY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
+					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
+					List.iter (fun upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid gbid) ^ ";\n")
+					) groupids
+				)
+			| EWRSeqNo (stridl, upewr) ->
+				let upid = doOutputEWR upewr
+				and groupids = List.map (fun (attrname, tblid) -> doOutputEWR (EWRInput (attrname, tblid))) stridl
+				and keyid = NewName.get ()
+				in
+				(
+					output_string oc ((dotnodeid keyid) ^ " [shape=box label=\"KEY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"SeqNo\" fillcolor=white];\n");
+					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
+					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
+					List.iteri (fun idx gid ->
+						output_string oc ((dotnodeid gid) ^ " -> " ^ (dotnodeid keyid) ^ " [label=" ^ (string_of_int (idx+1)) ^ "];\n")
+					) groupids
+				)
+		end;
+		nid)
+	and doOutputAOTEWR aot = match aot with
+		| AOTElem x -> doOutputEWR x
+		| AOTAnd ll | AOTOr ll ->
+			let upl = List.map doOutputAOTEWR ll
+			in
+			let nid = NewName.get ()
+			in
+			output_string oc ((dotnodeid nid) ^ "[shape=box label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
+			List.iter (fun upid ->
+				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
+			) upl;
+			nid
+	and doOutputStruct ewstr atBeginning =
+		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s) ewstr.outputrows
+		in
+		let (drawRowIds,_) = List.fold_left (fun (m,bb) qrows -> (IdtMap.mapi (fun k s -> doOutputRow false bb k s) qrows, not bb)) (drawRowIds0, true) ewstr.quantifiedrows
+		in
+		let resid = doOutputEWR ewstr.r_outputthing
+		and condid = doOutputAOTEWR ewstr.r_outputconds
+		in
+		let nid = NewName.get ()
+		in
+		output_string oc ((dotnodeid nid) ^ "[shape=box label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue style=filled" else "white") ^ "];\n");
+		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1];\n");
+		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2];\n");
+		nid
+	and doOutputRow isFinalOut isExists rid tbln =
+		let (oid, alreadyIn) = getRowId rid
+		in
+		if alreadyIn then oid
+		else
+		begin
+			output_string oc ((dotnodeid oid) ^ " [shape=box style=filled label=\"" ^ tbln ^ "\" fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^"];\n");
+			oid
+		end
+	in
+	ignore (doOutputStruct ewr true);
+	output_string oc "}\n"
+;;
+
 let output_ewd oc ewd =
 	let ftr = Format.formatter_of_out_channel oc
 	in
@@ -1195,6 +1506,30 @@ let output_ewd oc ewd =
 			elemPrinter oneArg;
 			if idx < (numargs - 1) then separatorPrinter () else ()
 		) argList
+	in
+	let rec outputAOT argTree elemPrinter =
+		match argTree with
+			| AOTElem x -> elemPrinter x
+			| AOTAnd ll -> begin
+				Format.pp_print_string ftr "{";
+				Format.pp_print_space ftr ();
+				Format.pp_open_box ftr 2;
+				outputListofSmthWithSep ll (fun y -> outputAOT y elemPrinter)
+					(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "AND"; Format.pp_print_space ftr ());
+				Format.pp_print_space ftr ();
+				Format.pp_close_box ftr ();
+				Format.pp_print_string ftr "}"
+			end
+			| AOTOr ll -> begin
+				Format.pp_print_string ftr "{";
+				Format.pp_print_space ftr ();
+				Format.pp_open_box ftr 2;
+				outputListofSmthWithSep ll (fun y -> outputAOT y elemPrinter)
+					(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "OR"; Format.pp_print_space ftr ());
+				Format.pp_print_space ftr ();
+				Format.pp_close_box ftr ();
+				Format.pp_print_string ftr "}"
+			end
 	in
 	let outputListofSmth argList elemPrinter =
 		outputListofSmthWithSep argList elemPrinter (fun () -> Format.pp_print_string ftr ","; Format.pp_print_space ftr ())
@@ -1238,9 +1573,7 @@ let output_ewd oc ewd =
 			Format.pp_print_break ftr 0 1;
 			Format.pp_print_string ftr "If the following holds:";
 			Format.pp_print_space ftr ();
-			outputListofSmthWithSep ewd.outputconds
-				(fun r_ot -> doOutputExpr allIDs r_ot)
-				(fun () -> Format.pp_print_space ftr (); Format.pp_print_string ftr "AND"; Format.pp_print_space ftr ());
+			outputAOT ewd.outputconds (fun r_ot -> doOutputExpr allIDs r_ot);
 		Format.pp_close_box ftr ()
 	and doOutputExpr allTbls = function
 		| EWDInput (tblname, attrname, tblid) -> begin

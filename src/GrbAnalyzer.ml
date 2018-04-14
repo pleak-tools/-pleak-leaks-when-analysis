@@ -31,7 +31,7 @@ let graphToTree dg n resultdir =
 	close_out oc;
 	let oc = open_out (resultdir ^ "/leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
 	in
-	GrbCollectLeaks.output_ewr oc (GrbCollectLeaks.translateEWD ewd);
+	GrbCollectLeaks.output_ewr_to_graph oc (GrbCollectLeaks.translateEWD ewd);
 (*	output_string oc "\n\n\n";
 	GrbCollectLeaks.output_ewd oc ewd; *)
 	close_out oc;
