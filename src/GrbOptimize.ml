@@ -1702,9 +1702,100 @@ let removeOutputControlDims dg =
 	DG.foldnodes (fun n dgcurr -> removeOneOutputControlDims dgcurr n allDimclass) dg dg
 ;;
 
-(*
 let mkSingleOutputPerComp dg n =
-	
+	let outSourcePl = ref RLSet.empty
+	and outTypePl = ref None
+	in
+	let numOutputs = DG.nodefoldoutedges dg (fun (_, nout, prt) cnt ->
+		if (match prt with PortSingle cval -> (outTypePl := Some cval; true) | _ -> false) &&
+			(match nout.nkind.nodeintlbl with NNOutput outsrc -> (outSourcePl := RLSet.union outsrc !outSourcePl; true) | _ -> false) then
+			cnt + 1 else cnt
+	) n 0
+	in
+	if (numOutputs < 2) then dg else
+	let Some outType = !outTypePl
+	and outSource = !outSourcePl
+	in
+	let newOutpNode = {
+		nkind = nkOutput outType outSource;
+		id = NewName.get ();
+		inputindextype = n.outputindextype;
+		outputindextype = n.outputindextype;
+		ixtypemap = identityIndexMap () n.outputindextype;
+		inputs = PortMap.empty;
+	}
+	and newOrNode = {
+		nkind = nkOr;
+		id = NewName.get ();
+		inputindextype = n.outputindextype;
+		outputindextype = n.outputindextype;
+		ixtypemap = identityIndexMap () n.outputindextype;
+		inputs = PortMap.empty;
+	}
+	in
+	let dg1 = dg |> DG.addnode newOutpNode |> DG.addnode newOrNode |>
+		DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingle outType) |>
+		DG.addedge ((identityIndexMap newOrNode.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingleB)
+	in
+	DG.nodefoldoutedges dg (fun ((IxM cc, edgeid), nout, prt) dgcurr ->
+		match nout.nkind.nodeintlbl, prt with
+			| NNOutput _, PortSingle _ -> begin
+				let Some (_,_, backmap) = cc.(0)
+				in
+				let cntrNodeIdPl = ref None
+				and cntrBackMapPl = ref None
+				in
+				let () = DG.nodefoldedges (fun ((IxM cc', _), _, prt') () ->
+					if prt' = PortSingleB then begin
+						let Some (id, _, bm) = cc'.(0)
+						in
+						cntrNodeIdPl := Some id;
+						cntrBackMapPl := Some bm
+					end
+				) nout ()
+				in
+				let Some cntrNodeId = !cntrNodeIdPl
+				and Some cntrBackMap = !cntrBackMapPl
+				and (AITT nouta) = nout.inputindextype
+				in
+				let cntrNode = DG.findnode cntrNodeId dg
+				in
+				let (AITT cntrb) = cntrNode.outputindextype
+				in
+				let invBackMap = Array.make (Array.length nouta.(0)) (-1)
+				in
+				Array.iteri (fun idx v -> invBackMap.(v) <- idx) backmap;
+				let cntrToValDimMap = Array.init (Array.length cntrb.(0)) (fun idx -> invBackMap.(cntrBackMap.(idx)))
+				in
+				let longOrIxMap = Array.make (Array.length backmap) (-1)
+				in
+				Array.iteri (fun idx v -> if v <> (-1) then longOrIxMap.(v) <- idx) cntrToValDimMap;
+				let longornode = {
+					nkind = nkLongOr;
+					id = NewName.get ();
+					inputindextype = cntrNode.outputindextype;
+					outputindextype = n.outputindextype;
+					ixtypemap = IxM [| Some ((), 0, longOrIxMap) |];
+					inputs = PortMap.empty;
+				}
+				in
+				dgcurr |> DG.addnode longornode |>
+					DG.addedge ((identityIndexMap cntrNodeId longornode.inputindextype, NewName.get ()), longornode.id, PortSingleB) |>
+					DG.addedge ((identityIndexMap longornode.id longornode.outputindextype, NewName.get ()), newOrNode.id, PortUnstrB) |>
+					DG.remnode nout.id
+			end
+			| _,_ -> dgcurr
+	) n dg1
+;;
 
 let singleOutputPerValue dg =
-*)
+	DG.foldnodes (fun nold dgcurr ->
+		if DG.hasnode nold.id dgcurr then
+		begin
+			let n = DG.findnode nold.id dgcurr
+			in
+			mkSingleOutputPerComp dgcurr n
+		end else dgcurr
+	) dg dg
+;;
+

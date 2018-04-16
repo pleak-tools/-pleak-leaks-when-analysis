@@ -29,11 +29,15 @@ let graphToTree dg n resultdir =
 	in
 	GrbPrint2.printgraph oc !changedg gdns;
 	close_out oc;
+	let trewd = GrbCollectLeaks.translateEWD ewd
+	in
+	let oc = open_out (resultdir ^ "/leakage_from_" ^ (NewName.to_string n.id) ^ ".dot")
+	in
+	GrbCollectLeaks.output_ewr_to_graph oc trewd;
+	close_out oc;
 	let oc = open_out (resultdir ^ "/leakage_from_" ^ (NewName.to_string n.id) ^ ".result")
 	in
-	GrbCollectLeaks.output_ewr_to_graph oc (GrbCollectLeaks.translateEWD ewd);
-(*	output_string oc "\n\n\n";
-	GrbCollectLeaks.output_ewd oc ewd; *)
+	GrbCollectLeaks.output_ewr oc trewd;
 	close_out oc;
 	(!changedg, newnid)
 ;;
@@ -76,7 +80,7 @@ let makeLegend dg resultdir =
 	in
 	output_string oc "{\n";
 	RLMap.iter (fun outpname resnodes ->
-		let fnames = List.map (fun nid -> "\"leakage_from_" ^ (NewName.to_string nid) ^ ".result\"") (IdtSet.elements resnodes)
+		let fnames = List.map (fun nid -> "\"leakage_from_" ^ (NewName.to_string nid) ^ ".dot\"") (IdtSet.elements resnodes)
 		in
 		output_string oc "  \"";
 		output_string oc outpname;
@@ -239,15 +243,24 @@ let analysis dg =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "finalgraph.dot"
+	let oc = open_out "pre_finalgraph.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
+	close_out oc;
+	let dgSingleOutputs = GrbOptimize.singleOutputPerValue dgstraightened
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "finalgraph.dot"
+	in
+	GrbPrint.printgraph oc dgSingleOutputs;
 	close_out oc;
 (*	let oc = open_out "leakswhen.result"
 	in
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
-	leaksAsGraphs dgstraightened resultfolder;
-	makeLegend dgstraightened resultfolder
+	leaksAsGraphs dgSingleOutputs resultfolder;
+	makeLegend dgSingleOutputs resultfolder
 ;;
 
