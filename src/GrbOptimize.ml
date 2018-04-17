@@ -1716,30 +1716,34 @@ let mkSingleOutputPerComp dg n =
 	let Some outType = !outTypePl
 	and outSource = !outSourcePl
 	in
-	let newOutpNode = {
-		nkind = nkOutput outType outSource;
-		id = NewName.get ();
-		inputindextype = n.outputindextype;
-		outputindextype = n.outputindextype;
-		ixtypemap = identityIndexMap () n.outputindextype;
-		inputs = PortMap.empty;
-	}
-	and newOrNode = {
-		nkind = nkOr;
-		id = NewName.get ();
-		inputindextype = n.outputindextype;
-		outputindextype = n.outputindextype;
-		ixtypemap = identityIndexMap () n.outputindextype;
-		inputs = PortMap.empty;
-	}
-	in
-	let dg1 = dg |> DG.addnode newOutpNode |> DG.addnode newOrNode |>
-		DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingle outType) |>
-		DG.addedge ((identityIndexMap newOrNode.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingleB)
+	let (outpNodes, orNodes, dg1) = RLSet.fold (fun src (outCurr, orCurr, dgcurr) ->
+		let newOutpNode = {
+			nkind = nkOutput outType (RLSet.singleton src);
+			id = NewName.get ();
+			inputindextype = n.outputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = identityIndexMap () n.outputindextype;
+			inputs = PortMap.empty;
+		}
+		and newOrNode = {
+			nkind = nkOr;
+			id = NewName.get ();
+			inputindextype = n.outputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = identityIndexMap () n.outputindextype;
+			inputs = PortMap.empty;
+		}
+		in
+		(RLMap.add src newOutpNode.id outCurr, RLMap.add src newOrNode.id orCurr,
+			dgcurr |> DG.addnode newOutpNode |> DG.addnode newOrNode |>
+				DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingle outType) |>
+				DG.addedge ((identityIndexMap newOrNode.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingleB)
+		)
+	) outSource (RLMap.empty, RLMap.empty, dg)
 	in
 	DG.nodefoldoutedges dg (fun ((IxM cc, edgeid), nout, prt) dgcurr ->
 		match nout.nkind.nodeintlbl, prt with
-			| NNOutput _, PortSingle _ -> begin
+			| NNOutput thisSrc, PortSingle _ -> begin
 				let Some (_,_, backmap) = cc.(0)
 				in
 				let cntrNodeIdPl = ref None
@@ -1770,19 +1774,22 @@ let mkSingleOutputPerComp dg n =
 				let longOrIxMap = Array.make (Array.length backmap) (-1)
 				in
 				Array.iteri (fun idx v -> if v <> (-1) then longOrIxMap.(v) <- idx) cntrToValDimMap;
-				let longornode = {
-					nkind = nkLongOr;
-					id = NewName.get ();
-					inputindextype = cntrNode.outputindextype;
-					outputindextype = n.outputindextype;
-					ixtypemap = IxM [| Some ((), 0, longOrIxMap) |];
-					inputs = PortMap.empty;
-				}
+				let dgnext = RLSet.fold (fun src dgxcurr ->
+					let longornode = {
+						nkind = nkLongOr;
+						id = NewName.get ();
+						inputindextype = cntrNode.outputindextype;
+						outputindextype = n.outputindextype;
+						ixtypemap = IxM [| Some ((), 0, longOrIxMap) |];
+						inputs = PortMap.empty;
+					}
+					in
+					dgxcurr |> DG.addnode longornode |>
+						DG.addedge ((identityIndexMap cntrNodeId longornode.inputindextype, NewName.get ()), longornode.id, PortSingleB) |>
+						DG.addedge ((identityIndexMap longornode.id longornode.outputindextype, NewName.get ()), RLMap.find src orNodes, PortUnstrB)
+					) thisSrc dgcurr
 				in
-				dgcurr |> DG.addnode longornode |>
-					DG.addedge ((identityIndexMap cntrNodeId longornode.inputindextype, NewName.get ()), longornode.id, PortSingleB) |>
-					DG.addedge ((identityIndexMap longornode.id longornode.outputindextype, NewName.get ()), newOrNode.id, PortUnstrB) |>
-					DG.remnode nout.id
+				DG.remnode nout.id dgnext
 			end
 			| _,_ -> dgcurr
 	) n dg1
