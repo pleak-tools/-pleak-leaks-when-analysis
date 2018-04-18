@@ -23,7 +23,7 @@ let aiddistrDbdesc =
 		(RLMap.add "pm_idx" VUnit (RLMap.add "shipname" VString (RLMap.singleton "deadline" VInteger)), [RLSet.singleton "pm_idx"])
 	(
 	RLMap.add "ship"
-		(RLMap.add "ship_id" VInteger (RLMap.add "name" VString (RLMap.add "cargo" VInteger (RLMap.add "latitude" VReal (RLMap.add "longitude" VReal (RLMap.add "length" VInteger (RLMap.add "draft" VInteger (RLMap.singleton "speed" VInteger))))))), [RLSet.singleton "ship_id"; RLSet.singleton "name"])
+		(RLMap.add "ship_id" VInteger (RLMap.add "name" VString (RLMap.add "cargo" VInteger (RLMap.add "latitude" VReal (RLMap.add "longitude" VReal (RLMap.add "length" VInteger (RLMap.add "draft" VInteger (RLMap.singleton "speed" VInteger))))))), [RLSet.singleton "ship_id" (*; RLSet.singleton "name" *) ])
 	(
 	RLMap.add "port"
 		(RLMap.add "port_id" VInteger (RLMap.add "name" VString (RLMap.add "latitude" VReal (RLMap.add "longitude" VReal (RLMap.add "offloadcapacity" VInteger (RLMap.add "offloadtime" VInteger (RLMap.add "harbordepth" VInteger (RLMap.singleton "available" VBoolean))))))), [RLSet.singleton "port_id"])

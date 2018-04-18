@@ -1363,6 +1363,41 @@ let output_ewr_to_graph oc ewr =
 	in
 	output_string oc "digraph {\n";
 	let dotnodeid x = "v_" ^ (NewName.to_string x)
+	and subgrstart x = "subgraph cluster_" ^ (NewName.to_string x)
+	in
+	let collectAttributeUses ewstr rowsOfInterest =
+		let mkAddition tblid attrname roi =
+			try
+				let s = IdtMap.find tblid roi
+				in
+				IdtMap.add tblid (RLSet.add attrname s) roi
+			with Not_found -> roi
+		in
+		let rec cau_ewr ewr roi = match ewr with
+			| EWRInput (attrname, tblid) -> mkAddition tblid attrname roi
+			| EWRExists _ -> roi
+			| EWRCompute (_, ll) -> List.fold_right cau_ewr ll roi
+			| EWRAggregate (_, remaindims, ewrstr) -> 
+				let roi' = IdtNameSet.fold (fun (tblid, attrname) roicurr ->
+					mkAddition tblid attrname roicurr
+				) remaindims roi
+				in
+				cau_struct ewrstr roi'
+			| EWRSeqNo (stridl, upewr) ->
+				let roi' = List.fold_right (fun (attrname, tblid) roicurr ->
+					mkAddition tblid attrname roicurr
+				) stridl roi
+				in
+				cau_ewr upewr roi'
+		and cau_aotewr aot roi = match aot with
+			| AOTElem e -> cau_ewr e roi
+			| AOTAnd ll | AOTOr ll -> List.fold_right cau_aotewr ll roi
+		and cau_struct ewrstr roi =
+			cau_ewr ewrstr.r_outputthing (cau_aotewr ewrstr.r_outputconds roi)
+		in
+		let roi = IdtSet.fold (fun nid m -> IdtMap.add nid RLSet.empty m) rowsOfInterest IdtMap.empty
+		in
+		cau_struct ewstr roi
 	in
 	let rec doOutputEWR ewr =
 		let (nid, alreadyIn) = getEWRId ewr
@@ -1370,13 +1405,7 @@ let output_ewr_to_graph oc ewr =
 		if alreadyIn then nid else
 		(begin
 			match ewr with
-			| EWRInput (attrname, tblid) ->
-				let grrowid = doOutputRow false false tblid ""
-				in
-				(
-					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ attrname ^ "\" fillcolor=white];\n");
-					output_string oc ((dotnodeid grrowid) ^ " -> " ^ (dotnodeid nid) ^ ";\n")
-				)
+			| EWRInput (attrname, tblid) -> raise (Failure "doOutputEWR with EWRInput: we should never come to this place")
 			| EWRExists _ -> ()
 			| EWRCompute (opname, ll) ->
 				let upl = List.map doOutputEWR ll
@@ -1408,7 +1437,7 @@ let output_ewr_to_graph oc ewr =
 				)
 				in
 				(
-					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=filled label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
 					List.iteri (fun ifx upid ->
 						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid));
 						(if numberinps then output_string oc (" [label=" ^ (string_of_int (ifx+1)) ^ "]"));
@@ -1424,8 +1453,8 @@ let output_ewr_to_graph oc ewr =
 				let gbid = NewName.get ()
 				in
 				(
-					output_string oc ((dotnodeid gbid) ^ " [shape=box label=\"GROUP BY\" fillcolor=white];\n");
-					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid gbid) ^ " [shape=box style=filled label=\"GROUP BY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=filled label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
 					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
 					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
 					List.iter (fun upid ->
@@ -1438,8 +1467,8 @@ let output_ewr_to_graph oc ewr =
 				and keyid = NewName.get ()
 				in
 				(
-					output_string oc ((dotnodeid keyid) ^ " [shape=box label=\"KEY\" fillcolor=white];\n");
-					output_string oc ((dotnodeid nid) ^ " [shape=box label=\"SeqNo\" fillcolor=white];\n");
+					output_string oc ((dotnodeid keyid) ^ " [shape=box style=filled label=\"KEY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=filled label=\"SeqNo\" fillcolor=white];\n");
 					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
 					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
 					List.iteri (fun idx gid ->
@@ -1455,32 +1484,54 @@ let output_ewr_to_graph oc ewr =
 			in
 			let nid = NewName.get ()
 			in
-			output_string oc ((dotnodeid nid) ^ "[shape=box label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
+			output_string oc ((dotnodeid nid) ^ "[shape=box style=filled label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
 			List.iter (fun upid ->
 				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ ";\n");
 			) upl;
 			nid
 	and doOutputStruct ewstr atBeginning =
-		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s) ewstr.outputrows
+		let getIdtSet m = IdtSet.of_list (List.map fst (IdtMap.bindings m))
 		in
-		let (drawRowIds,_) = List.fold_left (fun (m,bb) qrows -> (IdtMap.mapi (fun k s -> doOutputRow false bb k s) qrows, not bb)) (drawRowIds0, true) ewstr.quantifiedrows
+		let interestingRows = List.fold_right (fun m s -> IdtSet.union (getIdtSet m) s) ewstr.quantifiedrows (getIdtSet ewstr.outputrows)
+		in
+		let existAttrs = collectAttributeUses ewstr interestingRows
+		in
+		(if (not atBeginning) then
+		begin
+			let thrid = NewName.get ()
+			in
+			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=cyan\n\n")
+		end);
+		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s (IdtMap.find k existAttrs)) ewstr.outputrows
+		in
+		let (drawRowIds,_) = List.fold_left (fun (m,bb) qrows -> (IdtMap.mapi (fun k s -> doOutputRow false bb k s (IdtMap.find k existAttrs)) qrows, not bb)) (drawRowIds0, true) ewstr.quantifiedrows
 		in
 		let resid = doOutputEWR ewstr.r_outputthing
 		and condid = doOutputAOTEWR ewstr.r_outputconds
 		in
 		let nid = NewName.get ()
 		in
-		output_string oc ((dotnodeid nid) ^ "[shape=box label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue style=filled" else "white") ^ "];\n");
+		output_string oc ((dotnodeid nid) ^ "[shape=box label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue style=filled" else "white style=filled") ^ "];\n");
 		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1];\n");
 		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2];\n");
+		(if (not atBeginning) then
+		begin
+			output_string oc ("}\n")
+		end);
 		nid
-	and doOutputRow isFinalOut isExists rid tbln =
+	and doOutputRow isFinalOut isExists rid tbln attrset =
 		let (oid, alreadyIn) = getRowId rid
 		in
 		if alreadyIn then oid
 		else
 		begin
-			output_string oc ((dotnodeid oid) ^ " [shape=box style=filled label=\"" ^ tbln ^ "\" fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^"];\n");
+			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^";\n");
+				RLSet.iter (fun attrname ->
+					let (nid,_) = getEWRId (EWRInput (attrname, rid))
+					in
+					output_string oc ("  " ^ (dotnodeid nid) ^ " [shape=box style=filled label=\"" ^ attrname ^ "\" fillcolor=white];\n")
+				) attrset;
+			output_string oc "}\n";
 			oid
 		end
 	in

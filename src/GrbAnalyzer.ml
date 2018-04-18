@@ -79,16 +79,23 @@ let makeLegend dg resultdir =
 	let oc = open_out (resultdir ^ "/legend")
 	in
 	output_string oc "{\n";
+	let finishPreviousLine = ref false
+	in
 	RLMap.iter (fun outpname resnodes ->
 		let fnames = List.map (fun nid -> "\"leakage_from_" ^ (NewName.to_string nid) ^ ".dot\"") (IdtSet.elements resnodes)
 		in
+		if !finishPreviousLine then
+		begin
+			output_string oc ",\n"
+		end;
 		output_string oc "  \"";
 		output_string oc outpname;
 		output_string oc "\": [";
 		output_string oc (String.concat ", " fnames);
-		output_string oc "]\n"
+		output_string oc "]";
+		finishPreviousLine := true
 	) rescoll;
-	output_string oc "}\n";
+	output_string oc "\n}\n";
 	close_out oc
 ;;
 
