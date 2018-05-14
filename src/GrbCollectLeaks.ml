@@ -689,7 +689,24 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				(rlhalf, joinDimLists newdims)
 			| NNProj _ -> raise (Failure "Do not expect to see NNProj at describeNode")
-			| NNNumSmaller takeEqual -> raise (Failure "Add NNNumSmaller to describeNode")
+			| NNNumSmaller takeEqual -> (* raise (Failure "Add NNNumSmaller to describeNode") *)
+				let (argdescs, newdims) = DG.nodefoldedges (fun ((IxM cc, _), _, prt) (mm, rr) ->
+					let Some (srcid, _, backmap) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dg
+					in
+					match prt with
+						| PortOrder ->
+							let (r1, r2) = describeNode srcn (moveDimRecOverEdge alldimsup backmap) underNot
+							in
+							(IntMap.add 1 r1 mm, r2 :: rr)
+						| PortSingle _ ->
+							let (r1, r2) = describeNode srcn (moveDimRecOverEdge alldimsup backmap) underNot
+							in
+							(IntMap.add 2 r1 mm, r2 :: rr)
+				) n (IntMap.empty, [])
+				in
+				(EWDCompute (OPOrder takeEqual, (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs)))), joinDimLists newdims)
 	in
 	let (srcdesc, srcdims) = describeNode srcn (moveDimRecOverEdge nadimrec srcbackmap) false
 	in
@@ -1434,6 +1451,7 @@ let output_ewr_to_graph oc ewr =
 					| OPITE -> "?:", true
 					| OPTuple strl -> ("[" ^ (String.concat "," strl) ^"]"), true
 					| OPProject prname -> ("&#960;" ^ prname), false
+					| OPOrder takeEqual -> ("CNT(" ^ (if takeEqual then "LE" else "LT") ^ ")"), true
 				)
 				in
 				(

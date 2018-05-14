@@ -455,7 +455,7 @@ let inclvalue x y = match x,y with  (* strict inclusion *)
 
 let ns_inclvalue x y = (x=y) || (inclvalue x y);;
 
-type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string;;
+type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool;;
 
 let string_of_opname = function
 | OPPlus -> "+"
@@ -481,6 +481,7 @@ let string_of_opname = function
 | OPITE -> "if-then-else"
 | OPTuple ll -> "[" ^ (string_of_list id (intersperse ll ", ")) ^ "]-tuple"
 | OPProject s -> "Pr " ^ s
+| OPOrder b -> "CNT(" ^ (if b then "LE" else "LT") ^ ")"
 ;;
 
 type aggregationname = AGMax | AGMin | AGSum | AGCount | AGExist | AGAverage | AGMakeBag;;
