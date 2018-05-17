@@ -134,7 +134,7 @@ let aiddistrQuery =
 										) ,
 										["assign.port_id"; "stepC.portname"; "berth_id"; "rp_arrival"; "offloadstart"; "offloadtime"] ),
 									RAUnionWithDifferentSchema (RAUnionWithDifferentSchema (RATable "stepA", RATable "stepB"), RATable "stepC")  
-(*									RATable "stepB" *)
+(*									RATable "stepA" *)
 								)
 							)
 						)

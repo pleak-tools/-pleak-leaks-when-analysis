@@ -10,7 +10,7 @@ type raexpressiontype = RATable of string	(* The meaning of this should be clear
 					  | RAProject of raexpressiontype * string list (* ... and this one as well. The second argument lists the column that are left in the result *)
 					  | RACartesian of raexpressiontype list (* Cartesian product of several datasets. The names of columns in these datasets should all be different --- we do not have mechanisms to _automatically_ rename columns *)
 					  | RAUnion of raexpressiontype * raexpressiontype (* Here both datasets should have the same schema *)
-					  | RAUnionWithDifferentSchema of raexpressiontype * raexpressiontype (* Here the datasets should have disjoint sets of attributes. This operation adds more columns to both datasets, filling them with NULLs, such that they will have the same schema. Then it unions them. *)
+					  | RAUnionWithDifferentSchema of raexpressiontype * raexpressiontype (* This operation adds more columns to both datasets, filling them with NULLs, such that they will have the same schema. Then it unions them. The names of attributes of the left argument have "left." prepended to them. Similarly for the right argument *)
 					  | RAIntersection of raexpressiontype * raexpressiontype (* Here too *)
 					  | RADifference of raexpressiontype * raexpressiontype (* And here too *)
 					  | RANewColumn of raexpressiontype * string * raanyexp (* Here a new column is computed. For each row in the dataset, the value in the new column is computed from the values in existing columns (the same applies to the expression in RAFilter *)
@@ -457,6 +457,9 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	let (dgtmp, (filterlocleft, attrlocleft, ixtypeleft)) = convertRAwork dg0 dblocs leftexp
 	in
 	let (dg',(filterlocright, attrlocright, ixtyperight)) = convertRAwork dgtmp dblocs rightexp
+	in
+	let attrlocleft = RLMap.fold (fun k v m -> RLMap.add ("left." ^ k) v m) attrlocleft RLMap.empty
+	and attrlocright = RLMap.fold (fun k v m -> RLMap.add ("right." ^ k) v m) attrlocright RLMap.empty
 	in
 	let jointtype = addIndexTypes ixtypeleft ixtyperight
 	in
