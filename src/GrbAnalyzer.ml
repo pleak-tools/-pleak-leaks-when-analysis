@@ -57,12 +57,54 @@ let leaksAsGraphs dg resultdir =
 			in
 			let oc = open_out ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
 			in
-			GrbPrint.printgraph oc dg'';
+			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			ignore (graphToTree dg'' n resultdir)
+			(* ignore (graphToTree dg'' n resultdir) *)
+(*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
+			in
+			print_string "Found strongly connected components\n";
+			Array.iter (fun nodelist ->
+				if (List.length nodelist) > 1 then
+				begin
+					print_string "Found a component: ";
+					print_string (String.concat ", " (List.map NewName.to_string nodelist));
+					print_newline ()
+				end
+			) sccarr *)
 		end
 		else ()
 	) dg ();;
+
+let debugGraph dg =
+	let dg' = DG.foldnodes (fun n' dgcurr ->
+		if (match n'.nkind.nodeintlbl with NNOutput _ -> true | _ -> false) then
+			DG.remnode n'.id dgcurr
+		else
+			dgcurr
+	) dg dg
+	in
+	let n = DG.findnode (NewName.from_int 3481) dg'
+	in
+	let nn = {
+		nkind = nkOutput VBoolean RLSet.empty;
+		id = NewName.get ();
+		inputindextype = n.outputindextype;
+		outputindextype = n.outputindextype;
+		ixtypemap = identityIndexMap () n.outputindextype;
+		inputs = PortMap.empty;
+	}
+	in
+	let dg2 = DG.addnode nn dg'
+	in
+	let dg3 = DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingleB) (DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingle VBoolean) dg2)
+	in
+	let dg4 = GrbOptimize.removeDead dg3
+	in
+	let oc = open_out "debug_v3481.dot"
+	in
+	GrbPrint.printgraph oc dg4;
+	close_out oc
+;;
 
 let makeLegend dg resultdir =
 	let rescoll = DG.foldnodes (fun n m ->
@@ -118,7 +160,6 @@ let analysis dg =
 			exit 1
 		end
 	);
-	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
@@ -126,6 +167,19 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dg;
 	close_out oc;
+	(*debugGraph dg;*)
+			(let sccarr = GrbOptimize.SCCFinder.scc_array dg
+			in
+			print_string "Found strongly connected components\n";
+			Array.iter (fun nodelist ->
+				if (List.length nodelist) > 1 then
+				begin
+					print_string "Found a component: ";
+					print_string (String.concat ", " (List.map NewName.to_string nodelist));
+					print_newline ()
+				end
+			) sccarr);
+	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity dg))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
@@ -144,7 +198,7 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgsplitted;
 	close_out oc;
-	let dgtmp = GrbOptimize.foldAndsTogether dgsplitted
+	let dgtmp = GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether dgsplitted)
 	in
 	ignore (GrbOptimize.areIndicesInOrder "foldands" dgtmp);
 	print_string "Now going to reduce dimensions\n";
@@ -177,7 +231,7 @@ let analysis dg =
 	GrbPrint.printgraph oc dgsimpl1;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl1" dgsimpl1);
-	let dgsimpl2 = GrbOptimize.removeDead (GrbOptimize.foldAndsTogether (GrbOptimize.iseqToDimEq dgsimpl1))
+	let dgsimpl2 = GrbOptimize.removeDead (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.iseqToDimEq dgsimpl1)))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl2 0
 	in
@@ -207,7 +261,7 @@ let analysis dg =
 	GrbPrint.printgraph oc dgsimpl3a;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl3a" dgsimpl3a);
-	let dgsimpl4 = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims dgsimpl3a)
+	let dgsimpl4 = GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3a)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
@@ -217,7 +271,32 @@ let analysis dg =
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl4" dgsimpl4);
-	let dgstraightened = GrbOptimize.removeDead ( GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4))))))
+	let oc = open_out "descMax.z3"
+	in
+	GrbImplication.writeOrderingToZ3 dgsimpl4 oc;
+	GrbImplication.askZ3ForRedundantMaxEdges dgsimpl4 oc;
+	close_out oc;
+	let dgsimpl4aa = GrbOptimize.removeDead (GrbImplication.removeRedundantMaxEdges dgsimpl4)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4aa 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "simplified4aa.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4aa;
+	close_out oc;
+	ignore (GrbOptimize.areIndicesInOrder "simpl4aa" dgsimpl4);
+	let dgsimpl4a = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims dgsimpl4aa)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4a 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "simplified4a.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4a;
+	close_out oc;
+	ignore (GrbOptimize.areIndicesInOrder "simpl4a" dgsimpl4a);
+	let dgstraightened = GrbOptimize.removeDead ( GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4a)))))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
@@ -236,7 +315,7 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
-	let dgsimpl4 = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims dgsimpl3)
+	let dgsimpl4 = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3)))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
@@ -245,7 +324,16 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4))))))
+	let dgsimpl5 = GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified5.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl5;
+	close_out oc;
+	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl5)))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
@@ -254,19 +342,39 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-	let dgSingleOutputs = GrbOptimize.singleOutputPerValue dgstraightened
+	let dgSingleOutputs = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.singleOutputPerValue dgstraightened)))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
 	let oc = open_out "finalgraph.dot"
 	in
-	GrbPrint.printgraph oc dgSingleOutputs;
+	GrbPrintWithCFlow.printgraph oc dgSingleOutputs;
 	close_out oc;
 (*	let oc = open_out "leakswhen.result"
 	in
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
+	let oc = open_out "desc4.z3"
+	in
+	GrbImplication.writeBooleanDescToZ3 dgSingleOutputs oc;
+	GrbImplication.askZ3ForRedundantEdges dgSingleOutputs oc;
+	close_out oc;
+			(let dataedges = GrbOptimize.findDataEdges dgSingleOutputs
+			in
+			let dg' = DG.foldedges (fun ((_,eid),_,_) dg' -> if not (IdtSet.mem eid dataedges) then DG.remedge eid dg' else dg') dgSingleOutputs dgSingleOutputs
+			in
+			let sccarr = GrbOptimize.SCCFinder.scc_array dg'
+			in
+			print_string "Found strongly connected components\n";
+			Array.iter (fun nodelist ->
+				if (List.length nodelist) > 1 then
+				begin
+					print_string "Found a component: ";
+					print_string (String.concat ", " (List.map NewName.to_string nodelist));
+					print_newline ()
+				end
+			) sccarr);
 	leaksAsGraphs dgSingleOutputs resultfolder;
 	makeLegend dgSingleOutputs resultfolder
 ;;

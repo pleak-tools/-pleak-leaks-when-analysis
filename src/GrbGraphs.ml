@@ -23,19 +23,12 @@ struct
     (fold (fun k e piter g -> xiter (fun y -> piter (fun z -> g ((add k y) z)) ) e) m 
       (fun ff -> ff empty)) f
   let finddef y x m = try find x m with Not_found -> y
-  let union m1 m2 = fold add m1 m2
-(* Ilja: commented out, since currently it is not used, and the code produces
-   warnings
-  let select m =
-    let x = ref None
-    in
-    (try
-      iter (fun k v ->
-        x := Some (k,v);
-        raise Successful
-      ) m; raise Not_found
-    with Successful -> let Some y = !x in y)
-*)
+  let union m1 m2 = merge 
+  	(fun k v1 v2 -> match v1,v2 with
+  		| None,None -> None
+  		| Some x,_ -> Some x
+  		| _, Some y -> Some y
+  	) m1 m2
 end;;
 
 module type PrintOrdered =
@@ -99,7 +92,7 @@ end;;
 
 module NewName :
 sig
-  type idtype
+  type idtype = int
   val get : unit -> idtype
   val to_string : idtype -> string
   val from_string : string -> idtype
@@ -474,7 +467,7 @@ let string_of_opname = function
 | OPCoalesce -> "coalesce"
 | OPCeiling -> "ceiling"
 | OPIntConst x -> (string_of_int x) ^ "C"
-| OPStringConst s -> "\"" ^ s ^ "\""
+| OPStringConst s -> "\\\"" ^ s ^ "\\\""
 | OPRealConst r -> (string_of_float r) ^ "C"
 | OPBoolConst b -> (string_of_bool b)
 | OPNull vt -> "NULL (" ^ (string_of_valuetype vt) ^ ")"
@@ -521,12 +514,22 @@ type nodename =
 | NNTuple of (string * valuetype) list
 | NNProj of int * (string * valuetype) list
 | NNNumSmaller of bool
+| NNMaximum
+| NNSum
+| NNLongMerge of valuetype
+| NNMerge of valuetype
+| NNGeneric of string * int
+| NNAddrGen of NewName.idtype * int * int
+| NNTimePoint of string * int
+| NNLongUpdCombine of string
+| NNUpdCombine of string
 ;;
 
 type portsize = PortBounded of int | PortUnbounded;;
 
 type portname = 
 | PortSingle of valuetype
+| PortMulti of valuetype
 | PortSingleB
 | PortOperInput of int
 | PortCompare
@@ -540,6 +543,7 @@ type portname =
 
 let string_of_portname = function
 | PortSingle vt -> "PortSingle(" ^ (string_of_valuetype vt) ^ ")"
+| PortMulti vt -> "PortMulti(" ^ (string_of_valuetype vt) ^ ")"
 | PortSingleB -> "PortSingleB"
 | PortStrictB -> "PortStrictB"
 | PortUnstrB -> "PortUnstrB"
@@ -581,6 +585,7 @@ let portdesc pn =
 | PortFalse vt	-> { defdesc with inputkind = vt; wirename = "F"; inputopts = PortOptSet.empty }
 | PortTrue vt	-> { defdesc with inputkind = vt; wirename = "T"; inputopts = PortOptSet.empty }
 | PortSingle vt	-> { defdesc with inputkind = vt }
+| PortMulti vt	-> { defdesc with inputkind = vt; inputnum = PortUnbounded }
 | PortSingleB	-> { defdesc with inputkind = VBoolean; wirecolor = cdepcol; printbold = false; wirename = "C" }
 | PortStrictB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; wirecolor = cdepcol; printbold = false }
 | PortUnstrB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; inputopts = PortOptSet.empty; wirecolor = cdepcol; printbold = false }
@@ -731,6 +736,36 @@ let nkOperation i vt opname = {
   boldborder = true;
 };;
 
+let nkAddrGen place dimnum inpnum = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list (List.map (fun k -> PortOperInput k) (intfromto 1 inpnum));
+  outputtype = VInteger;
+  nodeintlbl = NNAddrGen (place, dimnum, inpnum);
+  nodelabel = (fun _ -> "Addr" ^ (NewName.to_string place) ^ "(" ^ (string_of_int dimnum) ^ ")");
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkTimePoint place inpnum = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.add (PortSingle VInteger) (PortSet.from_list (List.map (fun k -> PortOperInput k) (intfromto 1 inpnum)));
+  outputtype = VInteger;
+  nodeintlbl = NNTimePoint (place, inpnum);
+  nodelabel = (fun _ -> "TP_" ^ place);
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
 let nkTuple svtl = {
 	contracts = false;
 	makesbottom = false;
@@ -791,6 +826,81 @@ let nkId vtype = {
   boldborder = true;
 };;
 
+let nkGeneric name argc = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list (List.map (fun i -> PortOperInput i) (intfromto 1 argc));
+  outputtype = VAny;
+  nodeintlbl = NNGeneric (name, argc);
+  nodelabel = (fun _ -> name);
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkMaximum vtype = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list [PortMulti vtype];
+  outputtype = vtype;
+  nodeintlbl = NNMaximum;
+  nodelabel = (fun _ -> "MAX");
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkSum vtype = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list [PortMulti vtype];
+  outputtype = vtype;
+  nodeintlbl = NNSum;
+  nodelabel = (fun _ -> "+");
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkMerge vtype = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list [PortMulti vtype];
+  outputtype = vtype;
+  nodeintlbl = NNMerge vtype;
+  nodelabel = (fun _ -> "Merge");
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkUpdCombine name vtype = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = true;
+  ports = PortSet.from_list [PortMulti (VTuple [("idx", VInteger); ("data", vtype)]); PortSingle vtype];
+  outputtype = vtype;
+  nodeintlbl = NNUpdCombine name;
+  nodelabel = (fun _ -> "Combine(" ^ name ^ ")");
+  nodecolor = (192,128,0);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
 let nkEqualDims vtype dl = {
   contracts = true;
   makesbottom = false;
@@ -829,6 +939,26 @@ let nkAnd = {
   nodelabel = (fun _ -> "and");
   nodecolor = (200,0,0);
   boldborder = false;
+};;
+
+let nkLongMerge vtype = {
+  (nkId vtype) with
+  contracts = true;
+  ports = PortSet.singleton (PortSingle vtype);
+  outputtype = vtype;
+  nodeintlbl = NNLongMerge vtype;
+  nodelabel = (fun _ -> "Merge(L)");
+  nodecolor = (100,255,100);
+};;
+
+let nkLongUpdCombine name vtype = {
+  (nkId vtype) with
+  contracts = true;
+  ports = PortSet.singleton (PortSingle (VTuple [("idx", VInteger); ("data", vtype)]));
+  outputtype = VTuple [("idx", VInteger); ("data", vtype)];
+  nodeintlbl = NNLongUpdCombine name;
+  nodelabel = (fun _ -> "Combine(L; " ^ name ^ ")");
+  nodecolor = (100,255,100);
 };;
 
 let nkOr = {

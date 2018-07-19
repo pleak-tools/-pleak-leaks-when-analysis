@@ -144,3 +144,17 @@ let aiddistrQuery =
 	)
 ;;
 
+let onlySlotsDbdesc =
+	RLMap.singleton "slot"
+		(RLMap.add "port_id" VInteger (RLMap.add "berth_id" VInteger (RLMap.add "slot_id" VInteger (RLMap.add "ship_id" VInteger (RLMap.add "slotstart" VInteger (RLMap.singleton "slotend" VInteger))))), [RLSet.from_list ["port_id"; "berth_id"; "slot_id"]])
+;;
+
+let onlySlotsQuery =
+					RALetExp ("slot1",
+						RAAddSortColumn (
+							RAProject (RATable "slot", ["port_id"; "berth_id"; "slotstart"; "slotend"]),
+							"row_id", ["port_id"; "berth_id"], "slotstart" ),
+						RAProject (RATable "slot1", ["berth_id"; "port_id"; "slotstart"; "slotend"; "row_id"])
+					)
+;;
+
