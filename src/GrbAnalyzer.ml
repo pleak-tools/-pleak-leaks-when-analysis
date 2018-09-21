@@ -59,7 +59,7 @@ let leaksAsGraphs dg resultdir =
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			(* ignore (graphToTree dg'' n resultdir) *)
+			ignore (graphToTree dg'' n resultdir)
 (*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
 			in
 			print_string "Found strongly connected components\n";
