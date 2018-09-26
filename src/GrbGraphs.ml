@@ -826,14 +826,14 @@ let nkId vtype = {
   boldborder = true;
 };;
 
-let nkGeneric name argc = {
+let nkGeneric name isGuard argc = {
   contracts = false;
   makesbottom = false;
   inadvview = false;
   isinputnode = false;
   nofail = true;
   ports = PortSet.from_list (List.map (fun i -> PortOperInput i) (intfromto 1 argc));
-  outputtype = VAny;
+  outputtype = if isGuard then VBoolean else VAny;
   nodeintlbl = NNGeneric (name, argc);
   nodelabel = (fun _ -> name);
   nodecolor = (192,128,0);

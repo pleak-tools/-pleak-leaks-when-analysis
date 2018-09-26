@@ -141,6 +141,53 @@ let makeLegend dg resultdir =
 	close_out oc
 ;;
 
+let writeFlowChecks dg answers oc =
+	IdtMap.iter (fun inpNodeId inpAnswers ->
+		let inpNode = DG.findnode inpNodeId dg
+		in
+		let inpName = inpNode.nkind.nodelabel inpNode.ixtypemap
+		in
+		RLMap.iter (fun outpName (withAll, withNone, withFilter, withCheck) ->
+			output_string oc (String.sub inpName 6 ((String.length inpName) - 6));
+			output_string oc "\t";
+			output_string oc outpName;
+			output_string oc "\t";
+			if withNone then output_string oc "NEVER LEAKS" else
+			if (not withAll) then output_string oc "ALWAYS LEAKS" else
+			begin
+				output_string oc "Leaks only if";
+				let isNotFirst = ref false
+				in
+				IdtMap.iter (fun filterNodeId fb ->
+					if fb then () else
+					begin
+						(if !isNotFirst then output_string oc " OR");
+						isNotFirst := true;
+						let filterNode = DG.findnode filterNodeId dg
+						in
+						let filtername = filterNode.nkind.nodelabel filterNode.ixtypemap
+						in
+						output_string oc (" " ^ filtername ^ " is passed")
+					end
+				) withFilter;
+				IdtMap.iter (fun checkNodeId fb ->
+					if fb then () else
+					begin
+						(if !isNotFirst then output_string oc " OR");
+						isNotFirst := true;
+						let checkNode = DG.findnode checkNodeId dg
+						in
+						let checkname = checkNode.nkind.nodelabel checkNode.ixtypemap
+						in
+						output_string oc (" " ^ checkname ^ " holds")
+					end
+				) withCheck
+			end;
+			output_string oc "\n"
+		) inpAnswers
+	) answers
+;;
+
 let analysis dg =
 	if (Array.length Sys.argv) < 2 then
 	begin
@@ -324,7 +371,7 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgsimpl5 = GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)
+	let dgsimpl5 = GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in
@@ -376,6 +423,16 @@ let analysis dg =
 				end
 			) sccarr);
 	leaksAsGraphs dgSingleOutputs resultfolder;
-	makeLegend dgSingleOutputs resultfolder
+	makeLegend dgSingleOutputs resultfolder;
+	let oc = open_out "descAll.z3"
+	in
+	GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
+	close_out oc;
+	let aboutFlows = GrbImplication.checkFlows dgSingleOutputs
+	in
+	let oc = open_out (resultfolder ^ "/flowcheckresults")
+	in
+	writeFlowChecks dgSingleOutputs aboutFlows oc;
+	close_out oc
 ;;
 

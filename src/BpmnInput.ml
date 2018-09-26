@@ -21,6 +21,65 @@ and sprNetworkNode =  SPRNBranch of int * taskdef * int * int | SPRNJoin of int 
 type anyproc = PRStop of stoppingproc | PRSeq of stoppingproc * anyproc | PRParal of anyproc list | PRBranch of taskdef * anyproc * anyproc | PRReplicate of anyproc * procname | PRNetwork of (stoppingproc array) * (sprNetworkNode array) * ((int * anyproc) list)
 ;;
 
+let rec iterwithintersperse f1 f2 l = match l with
+	| [] -> ()
+	| [x] -> f1 x
+	| (x :: xs) -> f1 x; f2 (); iterwithintersperse f1 f2 xs
+;;
+
+let rec printanyproc oc tabnum =
+	let tabs = String.make (2 * tabnum) ' '
+	in function
+	| PRStop sproc -> output_string oc tabs; output_string oc "PRSTOP(\n"; printstoppingproc oc (tabnum + 1) sproc; output_string oc tabs; output_string oc ")\n"
+	| PRSeq (sproc, aproc) -> output_string oc tabs; output_string oc "PRSEQ(\n"; printstoppingproc oc (tabnum + 1) sproc; printanyproc oc (tabnum + 1) aproc; output_string oc tabs; output_string oc ")\n"
+	| PRParal aprocl -> output_string oc tabs; output_string oc "PRPARAL[\n"; List.iter (fun p -> printanyproc oc (tabnum + 1) p) aprocl; output_string oc tabs; output_string oc "]\n"
+	| PRBranch (td,tproc,fproc) -> output_string oc tabs, output_string oc "PRBranch(\n"; printtask oc (tabnum + 1) td; printanyproc oc (tabnum + 1) tproc; printanyproc oc (tabnum + 1) fproc; output_string oc tabs; output_string oc ")\n"
+	| PRReplicate (aproc, prname) -> output_string oc tabs; output_string oc "PRReplicate( "; output_string oc prname; output_string oc "\n"; printanyproc oc (tabnum + 1) aproc; output_string oc tabs; output_string oc ")\n"
+	| PRNetwork (sproca, spnna, tails) -> output_string oc tabs; output_string oc "PRNetwork{\n"; output_string oc tabs; output_string oc "EDGES:\n"; Array.iter (fun sproc -> printstoppingproc oc (tabnum + 1) sproc) sproca; output_string oc tabs; output_string oc "NODES:\n"; Array.iter (fun nnn -> printnetworknode oc (tabnum + 1) nnn) spnna; output_string oc tabs; output_string oc "TAILS:\n"; List.iter (fun (idx,aproc) -> output_string oc tabs; output_string oc (string_of_int idx); output_string oc ":\n"; printanyproc oc (tabnum + 1) aproc) tails; output_string oc tabs; output_string oc "}\n"
+and printstoppingproc oc tabnum = 
+	let tabs = String.make (2 * tabnum) ' '
+	in function
+	| SPRNil -> output_string oc tabs; output_string oc "SPRNIL()\n"
+	| SPRTask td -> output_string oc tabs; output_string oc "SPRTask(\n"; printtask oc (tabnum + 1) td; output_string oc tabs; output_string oc ")\n"
+	| SPRParal sprocl -> output_string oc tabs; output_string oc "SPRPARAL[\n"; List.iter (fun p -> printstoppingproc oc (tabnum + 1) p) sprocl; output_string oc tabs; output_string oc "]\n"
+	| SPRBranch (td,tproc,fproc) -> output_string oc tabs, output_string oc "SPRBranch(\n"; printtask oc (tabnum + 1) td; printstoppingproc oc (tabnum + 1) tproc; printstoppingproc oc (tabnum + 1) fproc; output_string oc tabs; output_string oc ")\n"
+	| SPRSeq (sproc1,sproc2) -> output_string oc tabs; output_string oc "SPRSEQ(\n"; printstoppingproc oc (tabnum + 1) sproc1; printstoppingproc oc (tabnum + 1) sproc2; output_string oc tabs; output_string oc ")\n"
+	| SPRPublish (ppropt, dsname) -> output_string oc tabs; output_string oc "SPRPublish("; output_string oc (match ppropt with None -> "None" | Some c -> NewName.to_string c); output_string oc ", "; output_string oc dsname; output_string oc ")\n"
+	| SPRNetwork (sproca, spnna) -> output_string oc tabs; output_string oc "SPRNetwork{\n"; output_string oc tabs; output_string oc "EDGES:\n"; Array.iter (fun sproc -> printstoppingproc oc (tabnum + 1) sproc) sproca; output_string oc tabs; output_string oc "NODES:\n"; Array.iter (fun nnn -> printnetworknode oc (tabnum + 1) nnn) spnna; output_string oc tabs; output_string oc "}\n"
+and printnetworknode oc tabnum =
+	let tabs = String.make (2 * tabnum) ' '
+	in function
+	| SPRNBranch (isrc,td,itr,ifl) -> output_string oc tabs; output_string oc "SPRNBranch("; output_string oc (string_of_int isrc); output_string oc "\n"; printtask oc (tabnum + 1) td; output_string oc tabs; output_string oc (string_of_int itr); output_string oc " <-> "; output_string oc (string_of_int ifl); output_string oc ")\n"
+	| SPRNJoin (ilist, tgt) -> output_string oc tabs; output_string oc "SPRNJoin(["; output_string oc (String.concat ";" (List.map string_of_int ilist)); output_string oc "], "; output_string oc (string_of_int tgt); output_string oc ")\n"
+and printtask oc tabnum =
+	let tabs = String.make (2 * tabnum) ' '
+	in function
+	| NormalTask (tname, tcont) -> output_string oc tabs; output_string oc "NormalTask("; output_string oc tname; output_string oc ",\n"; printtaskcont oc (tabnum + 1) tcont; output_string oc tabs; output_string oc ")\n"
+	| UpdateTask (tname, tcont) -> output_string oc tabs; output_string oc "UpdateTask("; output_string oc tname; output_string oc ",\n"; printtaskcont oc (tabnum + 1) tcont; output_string oc tabs; output_string oc ")\n"
+	| GuardTask (tname, defexpr, inplist) -> output_string oc tabs; output_string oc "GuardTask("; output_string oc tname; output_string oc ", "; printdexpr oc defexpr; output_string oc ", "; printinplist oc inplist; output_string oc ")\n"
+	| StartEvent (prptropt, tname) -> output_string oc tabs; output_string oc "StartEvent("; output_string oc tname; output_string oc ", "; output_string oc (match prptropt with None -> "None" | Some c -> NewName.to_string c); output_string oc ")\n"
+	| ProcLauncher (tname, prptr, prnlist) -> output_string oc tabs; output_string oc "ProcLauncher("; output_string oc tname; output_string oc ", "; output_string oc (NewName.to_string prptr); output_string oc ", "; printprnlist oc prnlist; output_string oc ")\n"
+and printinplist oc inplist = output_string oc "["; output_string oc (String.concat "; " (List.map (fun (prptropt, dsname) -> dsname ^ "@" ^ (match prptropt with None -> "Here" | Some c -> NewName.to_string c)) inplist)); output_string oc "]"
+and printprnlist oc prnlist = output_string oc "["; output_string oc (String.concat " -> " (List.map (function None -> "UP" | Some s -> s) prnlist)); output_string oc "]"
+and printdexpr oc = function
+	| DEIntConst c -> output_string oc (string_of_int c)
+	| DEFloatConst c -> output_string oc (string_of_float c)
+	| DEVar (dsname, compname) -> output_string oc dsname; output_string oc "."; output_string oc compname
+	| DEAppl (fnname, args) -> output_string oc fnname; output_string oc "("; iterwithintersperse (printdexpr oc) (fun () -> output_string oc ", ") args; output_string oc ")"
+	| DEOp (opname, args) -> output_string oc (string_of_opname opname); output_string oc "("; iterwithintersperse (printdexpr oc) (fun () -> output_string oc ", ") args; output_string oc ")"
+	| DEPtrSrcCheck (cptr, Right optr) -> output_string oc "SrcCheck("; output_string oc (NewName.to_string cptr); output_string oc " is backwards "; output_string oc (NewName.to_string optr); output_string oc ")"
+	| DEPtrSrcCheck (cptr, Left prnlist) -> output_string oc "SrcCheck("; output_string oc (NewName.to_string cptr); output_string oc " is from "; printprnlist oc prnlist; output_string oc ")"
+	| DEStringConst c -> output_string oc "\""; output_string oc c; output_string oc "\""
+and printtaskcont oc tabnum (compdefl, inpl, outpl) =
+	let tabs = String.make (2 * tabnum) ' '
+	in
+	output_string oc tabs; output_string oc "DEFINITIONS:\n";
+	List.iter (fun ((lhsds, lhscomp), rhs) -> output_string oc tabs; output_string oc lhsds; output_string oc "."; output_string oc lhscomp; output_string oc " = "; printdexpr oc rhs; output_string oc "\n" ) compdefl;
+	output_string oc tabs; output_string oc "INPUTS:\n";
+	List.iter (fun (prptropt,dsname) -> output_string oc tabs; output_string oc (dsname ^ "@" ^ (match prptropt with None -> "Here" | Some c -> NewName.to_string c) ^ "\n" )) inpl;
+	output_string oc tabs; output_string oc "OUTPUTS: "; output_string oc (String.concat ", " outpl); output_string oc "\n"
+;;
+
 type prptrdesctype = {
 (*	tgt : procname option list; *)
 	checknodeid : GrbInput.attrlocationtype; (* ID of the AND-node *)
@@ -373,7 +432,8 @@ let useDefOfPrPtrs ptrcollection =
 		match ddir with
 		| None -> (m, backm)
 		| Some (spath, _) ->
-			IdtMap.fold (fun sptr (spath', _) (mm, backmm) ->
+			IdtMap.fold (fun sptr (spath', beingStart) (mm, backmm) ->
+				if beingStart <> None then (mm, backmm) else
 				if spath = spath' then
 				begin
 					let s = try IdtMap.find sptr mm with Not_found -> IdtSet.empty
@@ -573,6 +633,7 @@ let findBPPrPtrs ptrcollection usedefs defuses dg0 =
 			in
 			let (dgn, andloc) = GrbInput.addNodesToGraph !currdg (AITT [| bixtcomp0 |]) complocations nkAnd (fun _ -> PortStrictB)
 			in
+			print_string ("The back pointer is ptr no. " ^ (NewName.to_string (IdtMap.find dptr defuses)) ^ "\n");
 			(dgn, IdtMap.add dptr [{checknodeid = andloc; procpath = spath; numdatadims = dindepnum + trunklen; numjointdims = trunklen; backptr = IdtMap.find dptr defuses;}] foundptrs)
 		end
 	) ptrcollection (dg0, IdtMap.empty)
@@ -822,28 +883,38 @@ let (writeDataSet : taskname -> datasetname -> graphpreparationtype -> DG.t -> d
 	end
 ;;
 
-let rec (convertDExpr : definingexpr -> graphpreparationtype -> DG.t -> datasetlocationtype RLMap.t -> DG.t * GrbInput.attrlocationtype) = fun dexpr prep dg0 inpdatasets ->
+let rec (convertDExpr : definingexpr -> graphpreparationtype -> bool -> DG.t -> datasetlocationtype RLMap.t -> DG.t * GrbInput.attrlocationtype) = fun dexpr prep isGuard dg0 inpdatasets ->
+let convertGeneric fname arglist =
+	if fname = "equals" then Some (DEOp (OPIsEq, arglist))
+	else None
+in
 match dexpr with
 | DEVar (dsname, dscomp) ->
 	let (_,_,dslocs,_) = RLMap.find dsname inpdatasets
 	in
 	(dg0, RLMap.find dscomp dslocs)
 | DEAppl (fname, arglist) ->
-	let (dg1, argloclist) = List.fold_right (fun dexpr' (dg', foundloclist) ->
-		let (dg'', nextloc) = convertDExpr dexpr' prep dg' inpdatasets
-		in
-		(dg'', (nextloc :: foundloclist))
-	) arglist (dg0, [])
+	let perhapsMeaningful = convertGeneric fname arglist
 	in
-	GrbInput.addNodesToGraph dg1 prep.currixt argloclist (nkGeneric fname (List.length argloclist)) (fun x -> PortOperInput (x+1))
+	(match perhapsMeaningful with
+		| None ->
+			let (dg1, argloclist) = List.fold_right (fun dexpr' (dg', foundloclist) ->
+				let (dg'', nextloc) = convertDExpr dexpr' prep false dg' inpdatasets
+				in
+				(dg'', (nextloc :: foundloclist))
+			) arglist (dg0, [])
+			in
+			GrbInput.addNodesToGraph dg1 prep.currixt argloclist (nkGeneric fname (isGuard || (((String.length fname) >= 3) && ((String.sub fname 0 3) = "is_"))) (List.length argloclist)) (fun x -> PortOperInput (x+1))
+		| Some altExpr -> convertDExpr altExpr prep isGuard dg0 inpdatasets
+	)
 | DEOp (op, arglist) ->
 	let (dg1, argloclist) = List.fold_right (fun dexpr' (dg', foundloclist) ->
-		let (dg'', nextloc) = convertDExpr dexpr' prep dg' inpdatasets
+		let (dg'', nextloc) = convertDExpr dexpr' prep false dg' inpdatasets
 		in
 		(dg'', (nextloc :: foundloclist))
 	) arglist (dg0, [])
 	in
-	GrbInput.addNodesToGraph dg1 prep.currixt argloclist (nkOperation (List.length arglist) VAny op) (fun x -> PortOperInput (x+1))
+	GrbInput.addNodesToGraph dg1 prep.currixt argloclist (nkOperation (List.length arglist) (if isGuard then VBoolean else VAny) op) (fun x -> PortOperInput (x+1))
 | DEIntConst x ->
 	GrbInput.addNodesToGraph dg0 prep.currixt [] (nkOperation 0 VInteger (OPIntConst x)) (fun _ -> PortSingle VInteger)
 | DEFloatConst x ->
@@ -913,7 +984,7 @@ let (convertTask : taskdef -> graphpreparationtype -> DG.t -> GrbInput.attrlocat
 	) proginps (dg0, RLMap.empty)
 	in
 	let (dg2, outps) = List.fold_right (fun ((newdsname, newcompname), defexpr) (dg', computedthings) ->
-		let (dg'', compattr) = convertDExpr defexpr prep dg' inpdatasets
+		let (dg'', compattr) = convertDExpr defexpr prep isGuard dg' inpdatasets
 		in
 		let currds = try RLMap.find newdsname computedthings with Not_found -> RLMap.empty
 		in
@@ -1153,6 +1224,10 @@ let rec (convertBPMNwork : anyproc -> graphpreparationtype -> DG.t -> GrbInput.a
 ;;
 
 let (convertBPMN : anyproc -> datasetdeclaration list -> RLSet.t -> DG.t) = fun bproc datasetdefs inpdatasets ->
+	let oc = open_out "procdescr"
+	in
+	printanyproc oc 0 bproc;
+	close_out oc;
 	let dg0 = DG.empty
 	and mydatasetdecls = List.fold_right (fun (dsname, dsdesc) m -> RLMap.add dsname (dsname, dsdesc) m) datasetdefs RLMap.empty
 	and zeroixt = AITT [| [||] |]

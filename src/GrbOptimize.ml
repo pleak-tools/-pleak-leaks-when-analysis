@@ -813,7 +813,7 @@ let longorOfFalse dg n =
 ;;
 
 let simplifyArithmetic dg =
-	let funchain = [simplifyCoalesce; simplifyAnd; simplifyOr; longorOfFalse; additionToSum; simplifyAddition; simplifyMax; dontOutputNulls; simplifyMerge]
+	let funchain = [simplifyCoalesce; simplifyAnd; simplifyOr; longorOfFalse; additionToSum; simplifyAddition; simplifyMax; simplifyMerge; dontOutputNulls]
 	in
 	TopolSorter.fold (fun nid dgnew ->
 		List.fold_left (fun dgcurr simpfun ->
@@ -1969,8 +1969,6 @@ let moveOneLongMergeNode dg oldeid =
 	in
 	print_string ("Calling moveMerge for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
 	if (match n.nkind.nodeintlbl with NNLongMerge _ -> false | _ -> true) then Right false else
-	let ((IxM cc,_), ntgt, prt) = DG.findedge oldeid dg
-	in
 	if (match ntgt.nkind.nodeintlbl with NNLongMerge _ -> true | _ -> false) then Right true else 
 	begin
 	print_string "It is a suitable edge\n";
@@ -1978,10 +1976,10 @@ let moveOneLongMergeNode dg oldeid =
 	and (AITT nb) = n.outputindextype
 	and (IxM ncc) = n.ixtypemap
 	and NNLongMerge vtype = n.nkind.nodeintlbl
-	and Some (srcid, backmap) = DG.nodefoldedges (fun ((IxM cc,_),_,_) _ ->
-		let Some (srcid,_,backmap) = cc.(0)
+	and Some (srcid, _, backmap) = DG.nodefoldedges (fun ((IxM cc,_),_,_) _ ->
+		let Some (srcid, useThisEdgeIdLater ,backmap) = cc.(0)
 		in
-		Some (srcid,backmap)
+		Some (srcid,useThisEdgeIdLater, backmap)
 	) n None
 	in
 	let Some ((),_,nfwdmap) = ncc.(0)
@@ -2083,6 +2081,7 @@ let moveOneLongMergeNode dg oldeid =
 		IdtSet.add oeid currdataedges
 	) newmerge IdtSet.empty
 	in
+	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
 	Left (dg2, newdataedges, newedgeid)
 	end
 ;;
@@ -2094,12 +2093,46 @@ let moveMergeDown dg =
 	and lastRetry = ref None
 	in
 	let edgeQ = Queue.create ()
+	and elemsInQ = ref IdtSet.empty
+	in
+	let putInQueue eid = if IdtSet.mem eid !elemsInQ then () else
+		begin
+			Queue.add eid edgeQ;
+			elemsInQ := IdtSet.add eid !elemsInQ
+		end
+	and takeFromQueue () =
+		let eid = Queue.take edgeQ
+		in
+		elemsInQ := IdtSet.remove eid !elemsInQ;
+		eid
 	in
 	IdtSet.iter (fun eid ->
-		Queue.add eid edgeQ
+		putInQueue eid
 	) !dataedges;
+	let checkLoopInvariant () =
+		let edgesFollowingLM = IdtSet.filter (fun eid ->
+			let ((IxM cc,_),_,_) = DG.findedge eid !currdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			let srcn = DG.findnode srcid !currdg
+			in
+			match srcn.nkind.nodeintlbl with NNLongMerge _ -> true | _ -> false
+		) !dataedges
+		in
+		let badEdges = Queue.fold (fun ss eid -> IdtSet.remove eid ss) edgesFollowingLM edgeQ
+		in
+		IdtSet.iter (fun eid ->
+			let ((IxM cc,_),ntgt,_) = DG.findedge eid !currdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			print_string ("The edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string srcid) ^ " to " ^ (NewName.to_string ntgt.id) ^ " is missing from the queue!\n")
+		) badEdges
+	in
 	while (not (Queue.is_empty edgeQ)) && (not !breakLoop) do
-		let eid = Queue.take edgeQ
+		checkLoopInvariant ();
+		let eid = takeFromQueue ()
 		in
 		print_string ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue\n");
 		match moveOneLongMergeNode !currdg eid with
@@ -2108,17 +2141,250 @@ let moveMergeDown dg =
 		begin
 			match !lastRetry with
 			| Some eid' when eid = eid' -> (breakLoop := true)
-			| Some eid' -> (Queue.add eid edgeQ; print_string "put it back to queue\n")
-			| None -> (lastRetry := Some eid; Queue.add eid edgeQ; print_string "put it back to queue, start loop detection\n")
+			| Some eid' -> (putInQueue eid'; print_string "put it back to queue\n")
+			| None -> (lastRetry := Some eid; putInQueue eid; print_string ("put it back to queue, start loop detection; there are now " ^ (string_of_int (Queue.length edgeQ)) ^ " edges in the queue\n"))
 		end
 		| Left (newdg, edgesForQ, newdataedge) ->
 		begin
 			lastRetry := None;
 			IdtSet.iter (fun neid ->
-				if IdtSet.mem neid !dataedges then (Queue.add neid edgeQ; print_string ("Add edge no. " ^ (NewName.to_string neid) ^ " to queue\n"))
+				if IdtSet.mem neid !dataedges then (putInQueue neid; print_string ("Add edge no. " ^ (NewName.to_string neid) ^ " to queue\n"))
 			) edgesForQ;
 			dataedges := IdtSet.add newdataedge !dataedges;
-			currdg := newdg
+			currdg := newdg;
+			let ((IxM cc,_),_,_) = DG.findedge eid newdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			let srcn = DG.findnode srcid newdg
+			in
+			if (match srcn.nkind.nodeintlbl with NNLongMerge _ -> true | _ -> false) then
+				(putInQueue eid; print_string ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue\n"))
+		end
+	done;
+	!currdg
+;;
+
+let moveOneFilterNode dg oldeid =
+	let ((IxM cc,_), ntgt, prt) = DG.findedge oldeid dg
+	in
+	let Some (nid,_,tgtbackmap) = cc.(0)
+	in
+	let n = DG.findnode nid dg
+	in
+	print_string ("Calling moveFilter for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
+	if (match n.nkind.nodeintlbl with NNFilter _ -> false | _ -> true) then None else
+	if (match ntgt.nkind.nodeintlbl with NNLongUpdCombine _ | NNUpdCombine _ -> true | _ -> false) then None else
+	if (match ntgt.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> true | _ -> false) then 
+	begin
+		print_string "Joining two filters\n";
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		and (IxM ncc) = n.ixtypemap
+		and (Some (srcid, backmap), Some (fltsrcid, fltbackmap)) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) (foundsrc, foundflt) ->
+			let Some (srcid, _, backmap) = cc.(0)
+			in
+			if prt = PortSingleB then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
+		) n (None, None)
+		and Some (flt2srcid, flt2eid, flt2backmap) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) foundflt ->
+			let Some (srcid, flt2eid, backmap) = cc.(0)
+			in
+			if prt = PortSingleB then Some (srcid, flt2eid, backmap) else foundflt
+		) ntgt None
+		and vtype =
+			match ntgt.nkind.nodeintlbl with
+			| NNFilter x -> x
+			| NNOutput _ ->
+			begin
+				let Some x = PortSet.fold (fun prtname res ->
+					match prtname with
+					| PortSingle y -> Some y
+					| _ -> res
+				) ntgt.nkind.ports None
+				in
+				x
+			end
+		in
+		let Some ((),_,nfwdmap) = ncc.(0)
+		in
+		let revfwdmap =
+			let res = Array.make (Array.length na.(0)) (-1)
+			in
+			for i = 0 to (Array.length nb.(0)) - 1 do
+				res.(nfwdmap.(i)) <- i
+			done;
+			res
+		in
+		let combNode = {
+			nkind = nkAnd;
+			id = NewName.get ();
+			inputindextype = ntgt.inputindextype;
+			outputindextype = ntgt.inputindextype;
+			ixtypemap = identityIndexMap () ntgt.inputindextype;
+			inputs = PortMap.empty;
+		}
+		and flt2tgtmap = Array.init (Array.length fltbackmap) (fun x -> tgtbackmap.(revfwdmap.(fltbackmap.(x))))
+		and src2tgtmap = Array.init (Array.length backmap) (fun x -> tgtbackmap.(revfwdmap.(backmap.(x))))
+		in
+		let dg1 =
+			DG.addedge ((IxM [| Some (flt2srcid, 0, flt2backmap) |], NewName.get ()), combNode.id, PortStrictB)
+			(DG.addedge ((IxM [| Some (fltsrcid, 0, flt2tgtmap) |], NewName.get ()), combNode.id, PortStrictB)
+			(DG.addedge ((identityIndexMap combNode.id ntgt.inputindextype, flt2eid), ntgt.id, PortSingleB)
+			(DG.addedge ((IxM [| Some (srcid, 0, src2tgtmap) |], oldeid), ntgt.id, PortSingle vtype)
+			(DG.addnode combNode dg))))
+		in
+		Some (Right dg1)
+	end
+	else 
+	begin
+	print_string "It is a suitable edge\n";
+	let (AITT na) = n.inputindextype
+	and (AITT nb) = n.outputindextype
+	and (IxM ncc) = n.ixtypemap
+	and NNFilter vtype = n.nkind.nodeintlbl
+	and (Some (srcid, backmap), Some (fltsrcid, fltbackmap)) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) (foundsrc, foundflt) ->
+		let Some (srcid, _, backmap) = cc.(0)
+		in
+		if prt = PortSingleB then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
+	) n (None, None)
+	in
+	let Some ((),_,nfwdmap) = ncc.(0)
+	in
+	let revfwdmap =
+		let res = Array.make (Array.length na.(0)) (-1)
+		in
+		for i = 0 to (Array.length nb.(0)) - 1 do
+			res.(nfwdmap.(i)) <- i
+		done;
+		res
+	in
+	let (AITT ntgta) = ntgt.inputindextype
+	and (AITT ntgtb) = ntgt.outputindextype
+	and (IxM ntgtc) = ntgt.ixtypemap
+	in
+	let Some ((),_,ntfwdmap) = ntgtc.(0)
+	in
+	let xtgtacomp = ntgta.(0)
+	and xtgtbcomp = ntgtb.(0)
+	and xtgtccomp = ntfwdmap
+	in
+	let xtgt = {
+		nkind = ntgt.nkind;
+		id = NewName.get ();
+		inputs = PortMap.empty;
+		inputindextype = AITT [| xtgtacomp |];
+		outputindextype = AITT [| xtgtbcomp |];
+		ixtypemap = IxM [| Some ((),0,xtgtccomp) |];
+	}
+	in
+	let newfilter = {
+		nkind = nkFilter (xtgt.nkind.outputtype);
+		id = ntgt.id;
+		inputs = PortMap.empty;
+		inputindextype = AITT [| xtgtbcomp |];
+		outputindextype = ntgt.outputindextype;
+		ixtypemap = IxM [| Some ((),0, Array.init (Array.length ntgtb.(0)) (fun x -> x)) |];
+	}
+	in
+	let src2xtgtmapcomp =
+		let mapsrcidx x =
+			let atoldmergea = backmap.(x)
+			in
+			let atoldmergeb = revfwdmap.(atoldmergea)
+			in
+			tgtbackmap.(atoldmergeb)
+		in
+		Array.init (Array.length backmap) mapsrcidx
+	in
+	let newedgeid = NewName.get ()
+	and filteringbackmap = Array.init (Array.length fltbackmap) (fun x -> tgtbackmap.(revfwdmap.(fltbackmap.(x))))
+	in
+	let dg1 = DG.addedge ((IxM [| Some (fltsrcid, 0, filteringbackmap) |], NewName.get ()), newfilter.id, PortSingleB) (DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid), newfilter.id, PortSingle xtgt.nkind.outputtype) (DG.changenode newfilter (DG.addnode xtgt dg)))
+	in
+	let dg2 = DG.nodefoldedges (fun ((IxM icc,ieid), _, iprt) dgx ->
+		if ieid = oldeid then
+			DG.addedge ((IxM [| Some (srcid, 0, src2xtgtmapcomp) |], ieid), xtgt.id, iprt) dgx
+		else
+			DG.addedge ((IxM icc, ieid), xtgt.id, iprt) dgx
+	) ntgt dg1
+	in
+	let newdataedges = DG.nodefoldoutedges dg2 (fun ((IxM occ, oeid), onn, oprt) currdataedges ->
+		IdtSet.add oeid currdataedges
+	) newfilter IdtSet.empty
+	in
+	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
+	Some (Left (dg2, newdataedges, newedgeid))
+	end
+;;
+
+let moveFilterDown dg =
+	let dataedges = ref (findDataEdges dg)
+	and currdg = ref dg
+	in
+	let edgeQ = Queue.create ()
+	and elemsInQ = ref IdtSet.empty
+	in
+	let putInQueue eid = if IdtSet.mem eid !elemsInQ then () else
+		begin
+			Queue.add eid edgeQ;
+			elemsInQ := IdtSet.add eid !elemsInQ
+		end
+	and takeFromQueue () =
+		let eid = Queue.take edgeQ
+		in
+		elemsInQ := IdtSet.remove eid !elemsInQ;
+		eid
+	in
+	IdtSet.iter (fun eid ->
+		putInQueue eid
+	) !dataedges;
+	let checkLoopInvariant () =
+		let edgesFollowingLM = IdtSet.filter (fun eid ->
+			let ((IxM cc,_),_,_) = DG.findedge eid !currdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			let srcn = DG.findnode srcid !currdg
+			in
+			match srcn.nkind.nodeintlbl with NNLongMerge _ -> true | _ -> false
+		) !dataedges
+		in
+		let badEdges = Queue.fold (fun ss eid -> IdtSet.remove eid ss) edgesFollowingLM edgeQ
+		in
+		IdtSet.iter (fun eid ->
+			let ((IxM cc,_),ntgt,_) = DG.findedge eid !currdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			print_string ("The edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string srcid) ^ " to " ^ (NewName.to_string ntgt.id) ^ " is missing from the queue!\n")
+		) badEdges
+	in
+	while (not (Queue.is_empty edgeQ)) do
+		(* checkLoopInvariant (); *)
+		let eid = takeFromQueue ()
+		in
+		print_string ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue\n");
+		match moveOneFilterNode !currdg eid with
+		| None -> ()
+		| Some (Right dgnew) ->
+		begin
+			currdg := dgnew
+		end
+		| Some (Left (newdg, edgesForQ, newdataedge)) ->
+		begin
+			IdtSet.iter (fun neid ->
+				if IdtSet.mem neid !dataedges then (putInQueue neid; print_string ("Add edge no. " ^ (NewName.to_string neid) ^ " to queue\n"))
+			) edgesForQ;
+			dataedges := IdtSet.add newdataedge !dataedges;
+			currdg := newdg;
+			let ((IxM cc,_),_,_) = DG.findedge eid newdg
+			in
+			let Some (srcid,_,_) = cc.(0)
+			in
+			let srcn = DG.findnode srcid newdg
+			in
+			if (match srcn.nkind.nodeintlbl with NNFilter _ -> true | _ -> false) then
+				(putInQueue eid; print_string ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue\n"))
 		end
 	done;
 	!currdg
