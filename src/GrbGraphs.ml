@@ -5,6 +5,7 @@ struct
   include Set.Make(Ord)
   let comparekeys = Ord.compare
   let from_list l = List.fold_right add l empty
+  let of_list = from_list
   let tolmap f s = fold (fun x l -> (f x) :: l) s []
   let map f s = fold (fun x -> add (f x)) s empty
   let mapl f s = fold (fun x -> union (from_list (f x))) s empty
