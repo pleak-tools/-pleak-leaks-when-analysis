@@ -2175,6 +2175,7 @@ let moveOneFilterNode dg oldeid =
 	print_string ("Calling moveFilter for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
 	if (match n.nkind.nodeintlbl with NNFilter _ -> false | _ -> true) then None else
 	if (match ntgt.nkind.nodeintlbl with NNLongUpdCombine _ | NNUpdCombine _ -> true | _ -> false) then None else
+	if ntgt.nkind.contracts then None else
 	if (match ntgt.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> true | _ -> false) then 
 	begin
 		print_string "Joining two filters\n";

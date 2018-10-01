@@ -26,12 +26,13 @@ let rec printoutxml colltags indent thing =
 
 let () =
 (*	let (dg, _, _) = GrbInput.convertRA RAInput.onlySlotsDbdesc RAInput.onlySlotsQuery *)
-(*	let (dg, _, _) = GrbInput.convertRA RAInput.aiddistrDbdesc RAInput.aiddistrQuery *)
+(*	let (dg, _, _) = GrbInput.convertRA Ord2RAInput.aiddistrDbdesc Ord2RAInput.aiddistrQuery *)
+	let (dg, _, _) = GrbInput.convertRA RAInput.aiddistrDbdesc RAInput.aiddistrQuery
 (*	let (dg, _, _) = GrbInput.convertRA RAInput.dbdesc RAInput.query *)
 (*	let dg = BpmnInput.convertBPMN Chronosync.wholeproc Chronosync.useddatasets Chronosync.inpdatasets *)
-	let (wholeproc, useddatasets, inpdatasets) = PleakBpmn.convertXMLBPMN "example.bpmn"
+(*	let (wholeproc, useddatasets, inpdatasets) = PleakBpmn.convertXMLBPMN "example.bpmn"
 	in
-	let dg = BpmnInput.convertBPMN wholeproc useddatasets inpdatasets
+	let dg = BpmnInput.convertBPMN wholeproc useddatasets inpdatasets *)
 	in
 	GrbAnalyzer.analysis dg
 ;;

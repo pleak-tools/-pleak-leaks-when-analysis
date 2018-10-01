@@ -92,10 +92,14 @@ let writeItAllToZ3 dg oc =
 			output_string oc " (S) S)\n";
 			output_string oc "(assert (forall (";
 			Buffer.output_buffer oc forallargs;
-			output_string oc (") (= x" ^ (string_of_int i));
+			output_string oc (") (! (= x" ^ (string_of_int i));
 			output_string oc (" (" ^ invFunName ^ " (" ^ (addrFunName tag dimnum) ^ " " );
 			Buffer.output_buffer oc funargs;
-			output_string oc ")))))\n"
+			output_string oc ")))";
+			output_string oc " :pattern (";
+			output_string oc (" (" ^ (addrFunName tag dimnum) ^ " ");
+			Buffer.output_buffer oc funargs;
+			output_string oc ")) )))\n"
 		done;
 	) addrgens;
 	DG.foldnodes (fun n () -> (* about the flow *)
@@ -338,12 +342,13 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")))\n"
 		end
-		| NNOperation c when (match c with OPLessThan | OPGreaterThan | OPLessEqual | OPGreaterEqual -> true | _ -> false) -> begin
+		| NNOperation c when (match c with OPLessThan | OPGreaterThan | OPLessEqual | OPGreaterEqual | OPIsEq -> true | _ -> false) -> begin
 			let kw = (match c with
 				| OPLessThan -> "<"
 				| OPGreaterThan -> ">"
 				| OPLessEqual -> "<="
 				| OPGreaterEqual -> ">="
+				| OPIsEq -> "="
 			)
 			in
 			let backmappl1 = ref None
@@ -382,7 +387,44 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")))\n"
 		end
-		| NNOperation (OPIntConst c) -> begin
+(*		| NNIsEq -> begin
+			let backmappl1 = ref None
+			and previdpl1 = ref None
+			and backmappl2 = ref None
+			and previdpl2 = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
+				let Some (nprevid, _, backmap) = cc.(0)
+				in
+				if !backmappl1 = None then
+				begin
+					backmappl1 := Some backmap;
+					previdpl1 := Some nprevid
+				end
+				else
+				begin
+					backmappl2 := Some backmap;
+					previdpl2 := Some nprevid
+				end
+			) n ();
+			let Some backmap1 = !backmappl1
+			and Some previd1 = !previdpl1
+			and Some backmap2 = !backmappl2
+			and Some previd2 = !previdpl2
+			in
+			output_string oc "(assert ";
+			output_forall_open ();
+			output_string oc "(= ";
+			output_string oc (vIdAndArgsToStr n.id fwdmap);
+			output_string oc " ";
+			output_string oc ("(= ");
+			output_string oc (vIdAndArgsToStr previd1 backmap1);
+			output_string oc " ";
+			output_string oc (vIdAndArgsToStr previd2 backmap2);
+			output_forall_close ();
+			output_string oc ")))\n"
+		end
+*)		| NNOperation (OPIntConst c) -> begin
 			output_string oc "(assert ";
 			output_forall_open ();
 			output_string oc "(= ";
@@ -1046,7 +1088,7 @@ let removeRedundantEdgesWithZ3 dg0 =
 	!currdg
 ;;
 
-let answerReachabilityQuestion dg (ic,oc) srcids tgtids flowThroughs checks =
+let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks =
 	let mkForall oitype pref nid =
 		if (Array.length oitype) = 0 then ((fun () -> ()), (fun () -> ()), fun () -> output_string oc "pref"; output_string oc (NewName.to_string nid))
 		else
@@ -1135,17 +1177,23 @@ let answerReachabilityQuestion dg (ic,oc) srcids tgtids flowThroughs checks =
 	output_string oc "(check-sat)\n";
 	flush oc;
 	output_string oc "(pop)\n";
-	let answer = input_line ic
-	in
-	if answer = "unknown" then
-	begin
-		print_endline ("Received an \"unknown\"")
-	end;
-	answer = "unsat"
+	match possIc with
+		| Some ic -> (
+			let answer = input_line ic
+			in
+			if answer = "unknown" then
+			begin
+				print_endline ("Received an \"unknown\"")
+			end;
+			answer = "unsat"
+		)
+		| None -> false
 ;;
 
-let checkFlows dg =
-	let (ic,oc) = Unix.open_process "z3 -in"
+let checkFlows dg possFName =
+	let (ic,oc) = match possFName with
+		| Some fname -> let occ = open_out fname in (None, occ)
+		| None -> let (icc,occ) = Unix.open_process "z3 -in" in (Some icc, occ)
 	in
 (*	let oc = open_out "descAll.z3"
 	in *)
@@ -1208,7 +1256,10 @@ let checkFlows dg =
 	in
 	output_string oc "(exit)\n";
 	flush oc;
-	ignore (Unix.close_process (ic,oc));
+	(match ic with
+		| Some icc -> ignore (Unix.close_process (icc,oc))
+		| None -> close_out oc
+	);
 (*	close_out oc; *)
 	answers
 ;;

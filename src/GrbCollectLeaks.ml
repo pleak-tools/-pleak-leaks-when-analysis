@@ -622,6 +622,24 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				let rlhalf = EWDCompute (opname, (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs))))
 				in
 				((if n.nkind.outputtype = VBoolean && underNot then EWDCompute (OPNot, [rlhalf]) else rlhalf), joinDimLists newdims)
+			| NNSum ->
+				let idx = ref 0
+				in
+				let (argdescs, newdims) = DG.nodefoldedges (fun ((IxM cc, _), _, prt) (mm, rr) ->
+					let Some (srcid, _, backmap) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dg
+					in
+					match prt with
+						| PortMulti _ ->
+							let (r1, r2) = describeNode srcn (moveDimRecOverEdge alldimsup backmap) underNot
+							in
+							(idx := !idx + 1; (IntMap.add !idx r1 mm, r2 :: rr))
+				) n (IntMap.empty, [])
+				in
+				let rlhalf = EWDCompute (OPPlus, (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs))))
+				in
+				((if n.nkind.outputtype = VBoolean && underNot then EWDCompute (OPNot, [rlhalf]) else rlhalf), joinDimLists newdims)
 			| NNAggregate agname ->
 				let Some r = DG.nodefoldedges (fun ((IxM cc, _), _, _) _ ->
 					let Some (srcid, _, backmap) = cc.(0)

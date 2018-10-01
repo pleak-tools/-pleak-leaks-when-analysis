@@ -59,7 +59,7 @@ let leaksAsGraphs dg resultdir =
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			ignore (graphToTree dg'' n resultdir)
+			ignore (graphToTree dg'' n resultdir) 
 (*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
 			in
 			print_string "Found strongly connected components\n";
@@ -379,7 +379,9 @@ let analysis dg =
 	let oc = open_out "r2simplified5.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5;
-	close_out oc;
+	close_out oc; 
+(*	let dgsimpl5 = dgsimpl4
+	in *)
 	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl5)))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
@@ -423,16 +425,18 @@ let analysis dg =
 				end
 			) sccarr);
 	leaksAsGraphs dgSingleOutputs resultfolder;
-	makeLegend dgSingleOutputs resultfolder;
+	makeLegend dgSingleOutputs resultfolder
+(*	;
 	let oc = open_out "descAll.z3"
 	in
 	GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
 	close_out oc;
-	let aboutFlows = GrbImplication.checkFlows dgSingleOutputs
+	ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3"));
+	let aboutFlows = GrbImplication.checkFlows dgSingleOutputs None
 	in
 	let oc = open_out (resultfolder ^ "/flowcheckresults")
 	in
 	writeFlowChecks dgSingleOutputs aboutFlows oc;
-	close_out oc
+	close_out oc *)
 ;;
 
