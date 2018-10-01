@@ -25,15 +25,18 @@ let rec printoutxml colltags indent thing =
 ;;
 
 let () =
-(*	let (dg, _, _) = GrbInput.convertRA RAInput.onlySlotsDbdesc RAInput.onlySlotsQuery *)
-(*	let (dg, _, _) = GrbInput.convertRA Ord2RAInput.aiddistrDbdesc Ord2RAInput.aiddistrQuery *)
-	let (dg, _, _) = GrbInput.convertRA RAInput.aiddistrDbdesc RAInput.aiddistrQuery
-(*	let (dg, _, _) = GrbInput.convertRA RAInput.dbdesc RAInput.query *)
-(*	let dg = BpmnInput.convertBPMN Chronosync.wholeproc Chronosync.useddatasets Chronosync.inpdatasets *)
-(*	let (wholeproc, useddatasets, inpdatasets) = PleakBpmn.convertXMLBPMN "example.bpmn"
+	let (resultfolder, possBpmnFile) = GrbAnalyzer.readParameters ()
 	in
-	let dg = BpmnInput.convertBPMN wholeproc useddatasets inpdatasets *)
-	in
-	GrbAnalyzer.analysis dg
+	match possBpmnFile with
+		| None ->
+			let (dg, _, _) = GrbInput.convertRA RAInput.aiddistrDbdesc RAInput.aiddistrQuery
+			in
+			GrbAnalyzer.analysis dg true resultfolder
+		| Some bpmnFile ->
+			let (wholeproc, useddatasets, inpdatasets) = PleakBpmn.convertXMLBPMN bpmnFile
+			in
+			let dg = BpmnInput.convertBPMN wholeproc useddatasets inpdatasets
+			in
+			GrbAnalyzer.analysis dg false resultfolder
 ;;
 

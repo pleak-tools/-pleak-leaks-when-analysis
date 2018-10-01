@@ -42,7 +42,7 @@ let graphToTree dg n resultdir =
 	(!changedg, newnid)
 ;;
 
-let leaksAsGraphs dg resultdir =
+let leaksAsGraphs dg resultdir isSQL =
 	DG.foldnodes (fun n () ->
 		if (match n.nkind.nodeintlbl with NNOutput _ -> true | _ -> false) then
 		begin
@@ -59,7 +59,7 @@ let leaksAsGraphs dg resultdir =
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			ignore (graphToTree dg'' n resultdir) 
+			(if isSQL then ignore (graphToTree dg'' n resultdir) )
 (*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
 			in
 			print_string "Found strongly connected components\n";
@@ -188,10 +188,10 @@ let writeFlowChecks dg answers oc =
 	) answers
 ;;
 
-let analysis dg =
+let readParameters () =
 	if (Array.length Sys.argv) < 2 then
 	begin
-		print_string ("Usage: " ^ Sys.executable_name ^ " folder_for_result_files\n");
+		print_string ("Usage: " ^ Sys.executable_name ^ " folder_for_result_files [name_of_analysed_BP.bpmn]\n");
 		exit 1
 	end;
 	let resultfolder = Sys.argv.(1)
@@ -207,6 +207,11 @@ let analysis dg =
 			exit 1
 		end
 	);
+	let bpmnFile = if (Array.length Sys.argv) = 2 then None else (Some Sys.argv.(2))
+	in (resultfolder, bpmnFile)
+;;
+
+let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
@@ -380,8 +385,6 @@ let analysis dg =
 	in
 	GrbPrint.printgraph oc dgsimpl5;
 	close_out oc; 
-(*	let dgsimpl5 = dgsimpl4
-	in *)
 	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl5)))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
@@ -424,19 +427,22 @@ let analysis dg =
 					print_newline ()
 				end
 			) sccarr);
-	leaksAsGraphs dgSingleOutputs resultfolder;
-	makeLegend dgSingleOutputs resultfolder
-(*	;
-	let oc = open_out "descAll.z3"
-	in
-	GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
-	close_out oc;
-	ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3"));
-	let aboutFlows = GrbImplication.checkFlows dgSingleOutputs None
-	in
-	let oc = open_out (resultfolder ^ "/flowcheckresults")
-	in
-	writeFlowChecks dgSingleOutputs aboutFlows oc;
-	close_out oc *)
+	leaksAsGraphs dgSingleOutputs resultfolder isSQL;
+	(if isSQL then makeLegend dgSingleOutputs resultfolder);
+	(if not isSQL then
+	begin
+		let oc = open_out "descAll.z3"
+		in
+		GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
+		close_out oc;
+		ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3"));
+		let aboutFlows = GrbImplication.checkFlows dgSingleOutputs None
+		in
+		let oc = open_out (resultfolder ^ "/flowcheckresults")
+		in
+		writeFlowChecks dgSingleOutputs aboutFlows oc;
+		close_out oc
+	end
+	)
 ;;
 

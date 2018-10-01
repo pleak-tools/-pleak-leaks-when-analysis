@@ -342,7 +342,7 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")))\n"
 		end
-		| NNOperation c when (match c with OPLessThan | OPGreaterThan | OPLessEqual | OPGreaterEqual | OPIsEq -> true | _ -> false) -> begin
+(*		| NNOperation c when (match c with OPLessThan | OPGreaterThan | OPLessEqual | OPGreaterEqual | OPIsEq -> true | _ -> false) -> begin
 			let kw = (match c with
 				| OPLessThan -> "<"
 				| OPGreaterThan -> ">"
@@ -387,7 +387,7 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")))\n"
 		end
-(*		| NNIsEq -> begin
+*)(*		| NNIsEq -> begin
 			let backmappl1 = ref None
 			and previdpl1 = ref None
 			and backmappl2 = ref None
