@@ -2087,7 +2087,8 @@ let moveOneLongMergeNode dg oldeid =
 ;;
 
 let moveMergeDown dg =
-	let dataedges = ref (findDataEdges dg)
+(*	let dataedges = ref (findDataEdges dg) *)
+	let dataedges = ref (DG.foldedges (fun ((_,eid),_,_) ss -> IdtSet.add eid ss) dg IdtSet.empty)
 	and currdg = ref dg
 	and breakLoop = ref false
 	and lastRetry = ref None
@@ -2278,8 +2279,10 @@ let moveOneFilterNode dg oldeid =
 		ixtypemap = IxM [| Some ((),0,xtgtccomp) |];
 	}
 	in
+	let filterBecomesAnd = (xtgt.nkind.outputtype = VBoolean)
+	in
 	let newfilter = {
-		nkind = nkFilter (xtgt.nkind.outputtype);
+		nkind = if filterBecomesAnd then nkAnd else nkFilter (xtgt.nkind.outputtype);
 		id = ntgt.id;
 		inputs = PortMap.empty;
 		inputindextype = AITT [| xtgtbcomp |];
@@ -2300,7 +2303,7 @@ let moveOneFilterNode dg oldeid =
 	let newedgeid = NewName.get ()
 	and filteringbackmap = Array.init (Array.length fltbackmap) (fun x -> tgtbackmap.(revfwdmap.(fltbackmap.(x))))
 	in
-	let dg1 = DG.addedge ((IxM [| Some (fltsrcid, 0, filteringbackmap) |], NewName.get ()), newfilter.id, PortSingleB) (DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid), newfilter.id, PortSingle xtgt.nkind.outputtype) (DG.changenode newfilter (DG.addnode xtgt dg)))
+	let dg1 = DG.addedge ((IxM [| Some (fltsrcid, 0, filteringbackmap) |], NewName.get ()), newfilter.id, if filterBecomesAnd then PortStrictB else PortSingleB) (DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid), newfilter.id, if filterBecomesAnd then PortStrictB else PortSingle xtgt.nkind.outputtype) (DG.changenode newfilter (DG.addnode xtgt dg)))
 	in
 	let dg2 = DG.nodefoldedges (fun ((IxM icc,ieid), _, iprt) dgx ->
 		if ieid = oldeid then
@@ -2319,7 +2322,8 @@ let moveOneFilterNode dg oldeid =
 ;;
 
 let moveFilterDown dg =
-	let dataedges = ref (findDataEdges dg)
+(*	let dataedges = ref (findDataEdges dg) *)
+	let dataedges = ref (DG.foldedges (fun ((_,eid),_,_) ss -> IdtSet.add eid ss) dg IdtSet.empty)
 	and currdg = ref dg
 	in
 	let edgeQ = Queue.create ()
@@ -2390,4 +2394,175 @@ let moveFilterDown dg =
 	done;
 	!currdg
 ;;
+
+(*
+let moveFiltersAndLongsDown dg =
+	let workq = Queue.create ()
+	in
+	DG.foldnodes (fun n () ->
+		match n.nkind.nodeintlbl with
+			| NNLongOr
+			| NNLongMerge _
+			| NNFilter _ -> (DG.nodefoldoutedges (fun ((_,eid),_,_) () -> Queue.add eid workq) dg n ())
+			| _ -> ()
+	) dg ();
+	let currdg = ref dg
+	and lastTimeSkipped = ref None
+	in
+	while (not (Queue.is_empty workq)) do
+		let eid = Queue.take workq
+		in
+		try
+			let ((IxM cc, _), ntgt, prt) = DG.findedge eid !currdg
+			in
+			let Some (nid, _, backmap) = cc.(0)
+			in
+			let n = DG.findnode nid !currdg
+			in
+			(if n.nodeintlbl.outputtype = VBoolean then
+			begin
+				match ntgt.nkind.nodeintlbl, prt with
+					| NNFilter _, PortSingle _ ->
+						let replntgt = {
+							nkind = nkAnd;
+							id = ntgt.id;
+							inputindextype = ntgt.inputindextype;
+							outputindextype = ntgt.outputindextype;
+							ixtypemap = ntgt.ixtypemap;
+							inputs = PortMap.empty;
+						}
+						in
+						let dgnew = DG.changenode replntgt !currdg
+						in
+						let dgnew2 = DG.nodefoldedges (fun ((IxM cc, eeid), _, prt) accdg ->
+							DG.addedge ((IxM cc, eeid), ntgt.id, PortStrictB) accdg
+						) ntgt !currdg
+						in
+						currdg := dgnew2
+					| NNLongMerge _, PortSingle _ ->
+						let replntgt = {
+							nkind = nkLongOr;
+							id = ntgt.id;
+							inputindextype = ntgt.inputindextype;
+							outputindextype = ntgt.outputindextype;
+							ixtypemap = ntgt.ixtypemap;
+							inputs = PortMap.empty;
+						}
+						in
+						let dgnew = DG.changenode replntgt !currdg
+						in
+						let dgnew2 = DG.nodefoldedges (fun ((IxM cc, eeid), _, prt) accdg ->
+							DG.addedge ((IxM cc, eeid), ntgt.id, PortSingleB) accdg
+						) ntgt !currdg
+						in
+						currdg := dgnew2
+					| _,_ -> ()
+			end);
+			let ntgt = DG.findedge ntgt.id !currdg
+			in
+			match n.nkind.nodeintlbl with
+				| NNLongOr -> begin
+					match ntgt.nkind.nodeintlbl with
+						| NNAnd
+						| NNOr ->
+							let (AITT nna) = n.inputindextype
+							and (AITT nnb) = n.outputindextype
+							and (IxM nnc) = n.ixtypemap
+							and (AITT nta) = ntgt.inputindextype
+							and (AITT ntb) = ntgt.outputindextype
+							and (IxM ntc) = ntgt.ixtypemap
+							in
+							let Some ((),_,nfwdmap) = nnc.(0)
+							and Some ((),_,tfwdmap) = ntc.(0)
+							in
+							let ncontracted =
+								let res = Array.make (Array.length nna.(0)) true
+								in
+								Array.iteri (fun _ i -> res.(i) <- false) nfwdmap;
+								res
+							and numContracted = (Array.length nna.(0)) - (Array.length nnb.(0))
+							in
+							let ncontractedPtr =
+								let res = Array.make numContracted 0
+								and ptr = ref 0
+								in
+								for i = 0 to ((Array.length nna.(0)) - 1) do
+									if ncontracted.(i) then
+									begin
+										res.(!ptr) <- i;
+										ptr := !ptr + 1
+									end else ()
+								done;
+								res
+							in
+							let nwa0 =
+								let res = Array.make ((Array.length nta.(0)) + numContracted) (NoValue, None)
+								in
+								for i = 0 to ((Array.length res) - 1) do
+									if i < Array.length nta.(0) then
+										res.(i) <- nta.(0).(i)
+									else
+										res.(i) <- nna.(0).(ncontractedPtr.(i - (Array.length nta.(0))))
+								done;
+								res
+							in
+							let nwb0 =
+								let res = Array.make ((Array.length ntb.(0)) + numContracted) (NoValue, None)
+								in
+								for i = 0 to ((Array.length res) - 1) do
+									if i < Array.length ntb.(0) then
+										res.(i) <- ntb.(0).(i)
+									else
+										res.(i) <- nna.(0).(ncontractedPtr.(i - (Array.length ntb.(0))))
+								done;
+								res
+							in
+							let wfwdmap =
+								let res = Array.make ((Array.length tfwdmap) + numContracted) (-1)
+								in
+								for i = 0 to ((Array.length res) - 1) do
+									if i < Array.length tfwdmap then
+										res.(i) <- tfwdmap.(i)
+									else
+										res.(i) <- i - ((Array.length nta.(0)) - (Array.length ntb.(0)))
+								done;
+								res
+							in
+							let newAndNode = {
+								nkind = ntgt.nkind;
+								id = NewName.get ();
+								inputindextype = AITT [| nwa0 |];
+								outputindextype = AITT [| nwb0 |];
+								ixtypemap = IxM [| Some ((), 0, wfwdmap) |];
+								inputs = PortMap.empty;
+							}
+							in
+							let dg1 = DG.addnode newAndNode !currdg
+							in
+							let dg2 = DG.nodefoldedges (fun ((IxM dd, eeid), no, nprt) dgnow ->
+								if eeid = eid then
+								begin
+								
+								end
+								else
+								begin
+								
+								end
+							) ntgt dg1
+							in
+							
+						| NNFilter _ ->
+						| NNOutput rls ->
+				end
+				| NNLongMerge vtype -> begin
+					
+				end
+				| NNFilter vtype -> begin
+					
+				end
+		with Not_found -> ()
+	done;
+	!currdg
+;;
+*)
 

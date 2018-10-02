@@ -59,7 +59,7 @@ let leaksAsGraphs dg resultdir isSQL =
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			(if isSQL then ignore (graphToTree dg'' n resultdir) )
+			(if (*isSQL *) true then ignore (graphToTree dg'' n resultdir) )
 (*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
 			in
 			print_string "Found strongly connected components\n";
@@ -142,6 +142,84 @@ let makeLegend dg resultdir =
 ;;
 
 let writeFlowChecks dg answers oc =
+	output_string oc "{\n  \"inputs\": [";
+	let isFirst = ref true
+	in
+	IdtMap.iter (fun inpNodeId _ ->
+		(if not !isFirst then output_string oc ",");
+		isFirst := false;
+		let inpNode = DG.findnode inpNodeId dg
+		in
+		let inpName = inpNode.nkind.nodelabel inpNode.ixtypemap
+		in
+		output_string oc "\n    \"";
+		output_string oc (String.sub inpName 6 ((String.length inpName) - 6));
+		output_string oc "\""
+	) answers;
+	let transpAnswers = IdtMap.fold (fun inpNodeId inpAnswers res ->
+		RLMap.fold (fun outpName (withAll, withNone, withFilter, withCheck) res' ->
+			let resInps = try RLMap.find outpName res' with Not_found -> IdtMap.empty
+			in
+			let resInps' = IdtMap.add inpNodeId (withAll, withNone, withFilter, withCheck) resInps
+			in
+			RLMap.add outpName resInps' res'
+		) inpAnswers res
+	) answers RLMap.empty
+	in
+	output_string oc "\n  ],\n  \"outputs\": [";
+	let isFirstOutput = ref true
+	in
+	RLMap.iter (fun outpName resInps ->
+		(if not !isFirstOutput then output_string oc ",");
+		isFirstOutput := false;
+		output_string oc "\n    {\n      \"";
+		output_string oc outpName;
+		output_string oc "\": [";
+		let isFirstInput = ref true
+		in
+		IdtMap.iter (fun inpNodeId (withAll, withNone, withFilter, withCheck) ->
+			(if not !isFirstInput then output_string oc ",");
+			isFirstInput := false;
+			output_string oc "\n        {";
+			if withNone then output_string oc "\"never\": null}" else
+			if (not withAll) then output_string oc "\"always\": null}" else
+			begin
+				output_string oc "\"if\": \"";
+				let isNotFirst = ref false
+				in
+				IdtMap.iter (fun filterNodeId fb ->
+					if fb then () else
+					begin
+						(if !isNotFirst then output_string oc " OR ");
+						isNotFirst := true;
+						let filterNode = DG.findnode filterNodeId dg
+						in
+						let filtername = filterNode.nkind.nodelabel filterNode.ixtypemap
+						in
+						output_string oc (filtername ^ " is passed")
+					end
+				) withFilter;
+				IdtMap.iter (fun checkNodeId fb ->
+					if fb then () else
+					begin
+						(if !isNotFirst then output_string oc " OR");
+						isNotFirst := true;
+						let checkNode = DG.findnode checkNodeId dg
+						in
+						let checkname = checkNode.nkind.nodelabel checkNode.ixtypemap
+						in
+						output_string oc (" " ^ checkname ^ " holds")
+					end
+				) withCheck;
+				output_string oc "\"}"
+			end
+		) resInps;
+		output_string oc "\n      ]\n    }"
+	) transpAnswers;
+	output_string oc "\n  ]\n}\n"
+;;
+	
+(*	
 	IdtMap.iter (fun inpNodeId inpAnswers ->
 		let inpNode = DG.findnode inpNodeId dg
 		in
@@ -187,6 +265,8 @@ let writeFlowChecks dg answers oc =
 		) inpAnswers
 	) answers
 ;;
+*)
+
 
 let readParameters () =
 	if (Array.length Sys.argv) < 2 then
@@ -394,7 +474,7 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-	let dgSingleOutputs = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.singleOutputPerValue dgstraightened)))))
+	let dgSingleOutputs = (* GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 ( *)  GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.singleOutputPerValue dgstraightened))))) (* )) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
 	in
