@@ -356,6 +356,7 @@ let mapOnAOT f = foldOnAOT (fun l -> AOTAnd l) (fun l -> AOTOr l) (fun x -> AOTE
 type expWithDims = EWDInput of string * string * (string IdtMap.t)	(* table name, attribute name, dims *)
 				 | EWDExists of string * (string IdtMap.t)			(* table name, dims *)
 				 | EWDCompute of operationname * expWithDims list
+				 | EWDComputeGen of string * expWithDims list
 				 | EWDTakeDim of NewName.idtype * string
 				 | EWDAggregate of aggregationname * IdtNameSet.t * outputdescdimstype
 				 | EWDSeqNo of ((NewName.idtype * string) list) * expWithDims
@@ -622,6 +623,38 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				let rlhalf = EWDCompute (opname, (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs))))
 				in
 				((if n.nkind.outputtype = VBoolean && underNot then EWDCompute (OPNot, [rlhalf]) else rlhalf), joinDimLists newdims)
+			| NNAddrGen (place, dimnum, inpnum) ->
+				let (argdescs, newdims) = DG.nodefoldedges (fun ((IxM cc, _), _, prt) (mm, rr) ->
+					let Some (srcid, _, backmap) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dg
+					in
+					match prt with
+						| PortOperInput idx ->
+							let (r1, r2) = describeNode srcn (moveDimRecOverEdge alldimsup backmap) underNot
+							in
+							(IntMap.add idx r1 mm, r2 :: rr)
+				) n (IntMap.empty, [])
+				in
+				let rlhalf = EWDComputeGen ("Addr" ^ (NewName.to_string place) ^ "(" ^ (string_of_int dimnum) ^ ")", (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs))))
+				in
+				((if n.nkind.outputtype = VBoolean && underNot then EWDCompute (OPNot, [rlhalf]) else rlhalf), joinDimLists newdims)
+			| NNGeneric (opname, opargnum) ->
+				let (argdescs, newdims) = DG.nodefoldedges (fun ((IxM cc, _), _, prt) (mm, rr) ->
+					let Some (srcid, _, backmap) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dg
+					in
+					match prt with
+						| PortOperInput idx ->
+							let (r1, r2) = describeNode srcn (moveDimRecOverEdge alldimsup backmap) underNot
+							in
+							(IntMap.add idx r1 mm, r2 :: rr)
+				) n (IntMap.empty, [])
+				in
+				let rlhalf = EWDComputeGen (opname, (List.map (fun i -> IntMap.find i argdescs) (intfromto 1 (IntMap.cardinal argdescs))))
+				in
+				((if n.nkind.outputtype = VBoolean && underNot then EWDCompute (OPNot, [rlhalf]) else rlhalf), joinDimLists newdims)
 			| NNSum ->
 				let idx = ref 0
 				in
@@ -758,6 +791,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 type expWithRows = EWRInput of string * NewName.idtype (* attribute name, table row ID. There's a map from ID-s to table names somewhere *)
 				 | EWRExists of NewName.idtype
 				 | EWRCompute of operationname * expWithRows list
+				 | EWRComputeGen of string * expWithRows list
 				 | EWRAggregate of aggregationname * IdtNameSet.t * outputdescrowstype
 				 | EWRSeqNo of ((string * NewName.idtype) list) * expWithRows (* list elements: attribute name, table row ID *)
 and outputdescrowstype = {
@@ -805,7 +839,8 @@ let translateEWD ewd =
 		and collectTableRowsFromExpr expr = match expr with
 			| EWDInput (tblname, _, dimset) -> ignore (addTblRow tblname dimset)
 			| EWDExists (tblname, dimset) -> ignore (addTblRow tblname dimset)
-			| EWDCompute (_, ll) -> List.iter collectTableRowsFromExpr ll
+			| EWDCompute (_, ll)
+			| EWDComputeGen (_, ll) -> List.iter collectTableRowsFromExpr ll
 			| EWDTakeDim _ -> ()
 			| EWDAggregate (_, _, ewd) -> collectTableRowsFromEWD ewd
 			| EWDSeqNo (_, e) -> collectTableRowsFromExpr e
@@ -845,7 +880,8 @@ let translateEWD ewd =
 			match expr with
 			| EWDInput _ -> ()
 			| EWDExists _ -> ()
-			| EWDCompute (_, ll) -> List.iter checkTakeDimsExpr ll
+			| EWDCompute (_, ll)
+			| EWDComputeGen (_, ll) -> List.iter checkTakeDimsExpr ll
 			| EWDTakeDim (dimid, attrname) -> considerEntry dimid attrname
 			| EWDAggregate (_, idns, ewd) -> begin
 				IdtNameSet.iter (fun (dimid, attrname) -> considerEntry dimid attrname) idns;
@@ -975,6 +1011,10 @@ let translateEWD ewd =
 			let subexps = List.map (reallyTranslateExpr consdimspass consrowspass) explist
 			in
 			EWRCompute (opname, subexps)
+		| EWDComputeGen (opname, explist) ->
+			let subexps = List.map (reallyTranslateExpr consdimspass consrowspass) explist
+			in
+			EWRComputeGen (opname, subexps)
 		| EWDTakeDim (dimid, dimname) ->
 			let (tblid, dimname') = IdtNameSet.choose (IdtMap.find dimid !dimToRow)
 			in
@@ -1275,6 +1315,18 @@ let output_ewr oc ewr =
 				end);
 			Format.pp_close_box ftr ()
 			end
+		| EWRComputeGen (opname, arglist) -> begin
+			Format.pp_open_box ftr 2;
+				Format.pp_print_string ftr opname; (if arglist <> [] then
+				begin
+					Format.pp_print_string ftr "(";
+					Format.pp_print_cut ftr ();
+					outputListofSmth arglist (doOutputExpr allTbls);
+					Format.pp_print_cut ftr ();
+					Format.pp_print_string ftr ")"
+				end);
+			Format.pp_close_box ftr ()
+			end
 		| EWRAggregate (aggrname, remaindims, ewr) -> begin
 			Format.pp_open_box ftr 2;
 				Format.pp_print_string ftr (string_of_aggrname aggrname);
@@ -1332,6 +1384,7 @@ let output_ewr_to_graph oc ewr =
 		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
 		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2
 		| EWRCompute (op1, ll1), EWRCompute (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRComputeGen (op1, ll1), EWRComputeGen (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
 		| EWRSeqNo (sidl1, c1), EWRSeqNo (sidl2, c2) -> (compareEWRs idEquiv c1 c2) && (List.for_all2 (fun (s1,id1) (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)) sidl1 sidl2)
 		| EWRAggregate (ag1, ins1, od1), EWRAggregate (ag2, ins2, od2) ->
 			let res =
@@ -1411,7 +1464,8 @@ let output_ewr_to_graph oc ewr =
 		let rec cau_ewr ewr roi = match ewr with
 			| EWRInput (attrname, tblid) -> mkAddition tblid attrname roi
 			| EWRExists _ -> roi
-			| EWRCompute (_, ll) -> List.fold_right cau_ewr ll roi
+			| EWRCompute (_, ll) 
+			| EWRComputeGen (_, ll) -> List.fold_right cau_ewr ll roi
 			| EWRAggregate (_, remaindims, ewrstr) -> 
 				let roi' = IdtNameSet.fold (fun (tblid, attrname) roicurr ->
 					mkAddition tblid attrname roicurr
@@ -1442,10 +1496,11 @@ let output_ewr_to_graph oc ewr =
 			match ewr with
 			| EWRInput (attrname, tblid) -> raise (Failure "doOutputEWR with EWRInput: we should never come to this place")
 			| EWRExists _ -> ()
-			| EWRCompute (opname, ll) ->
+			| EWRCompute (_, ll)
+			| EWRComputeGen (_, ll) ->
 				let upl = List.map doOutputEWR ll
 				in
-				let nodelbl, numberinps = (match opname with
+				let nodelbl, numberinps = ( match ewr with | EWRCompute (opname, _) -> (match opname with
 					| OPPlus -> "+", false
 					| OPNeg -> "-", false
 					| OPMult -> "*", false
@@ -1470,6 +1525,8 @@ let output_ewr_to_graph oc ewr =
 					| OPTuple strl -> ("[" ^ (String.concat "," strl) ^"]"), true
 					| OPProject prname -> ("&#960;" ^ prname), false
 					| OPOrder takeEqual -> ("CNT(" ^ (if takeEqual then "LE" else "LT") ^ ")"), true
+				)
+					| EWRComputeGen (opnamestr, _) -> opnamestr, true
 				)
 				in
 				(
@@ -1684,6 +1741,18 @@ let output_ewd oc ewd =
 		| EWDCompute (opname, arglist) -> begin
 			Format.pp_open_box ftr 2;
 				Format.pp_print_string ftr (string_of_opname opname); (if arglist <> [] then
+				begin
+					Format.pp_print_string ftr "(";
+					Format.pp_print_cut ftr ();
+					outputListofSmth arglist (doOutputExpr allTbls);
+					Format.pp_print_cut ftr ();
+					Format.pp_print_string ftr ")"
+				end);
+			Format.pp_close_box ftr ()
+			end
+		| EWDComputeGen (opname, arglist) -> begin
+			Format.pp_open_box ftr 2;
+				Format.pp_print_string ftr opname; (if arglist <> [] then
 				begin
 					Format.pp_print_string ftr "(";
 					Format.pp_print_cut ftr ();
