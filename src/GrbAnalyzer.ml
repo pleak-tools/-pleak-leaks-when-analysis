@@ -157,10 +157,10 @@ let writeFlowChecks dg answers oc =
 		output_string oc "\""
 	) answers;
 	let transpAnswers = IdtMap.fold (fun inpNodeId inpAnswers res ->
-		RLMap.fold (fun outpName (withAll, withNone, withFilter, withCheck) res' ->
+		RLMap.fold (fun outpName ioresults res' ->
 			let resInps = try RLMap.find outpName res' with Not_found -> IdtMap.empty
 			in
-			let resInps' = IdtMap.add inpNodeId (withAll, withNone, withFilter, withCheck) resInps
+			let resInps' = IdtMap.add inpNodeId ioresults resInps
 			in
 			RLMap.add outpName resInps' res'
 		) inpAnswers res
@@ -177,40 +177,46 @@ let writeFlowChecks dg answers oc =
 		output_string oc "\": [";
 		let isFirstInput = ref true
 		in
-		IdtMap.iter (fun inpNodeId (withAll, withNone, withFilter, withCheck) ->
+		IdtMap.iter (fun inpNodeId (withAll, withNone, allResults) ->
 			(if not !isFirstInput then output_string oc ",");
 			isFirstInput := false;
 			output_string oc "\n        {";
 			if withNone then output_string oc "\"never\": null}" else
 			if (not withAll) then output_string oc "\"always\": null}" else
 			begin
+				let hasSeveralElements = ((List.length allResults) > 1)
+				in
 				output_string oc "\"if\": \"";
 				let isNotFirst = ref false
 				in
-				IdtMap.iter (fun filterNodeId fb ->
-					if fb then () else
-					begin
-						(if !isNotFirst then output_string oc " OR ");
-						isNotFirst := true;
+				List.iter (fun (badFuns, badChecks) ->
+					(if !isNotFirst then output_string oc " OR ");
+					isNotFirst := true;
+					let needsBrackets = (((IdtSet.cardinal badFuns) + (IdtSet.cardinal badChecks)) > 1) && hasSeveralElements
+					in
+					(if needsBrackets then output_string oc "(");
+					let isNotFstInGrp = ref false
+					in
+					IdtSet.iter (fun filterNodeId ->
+						(if !isNotFstInGrp then output_string oc " AND ");
+						isNotFstInGrp := true;
 						let filterNode = DG.findnode filterNodeId dg
 						in
 						let filtername = filterNode.nkind.nodelabel filterNode.ixtypemap
 						in
 						output_string oc (filtername ^ " is passed")
-					end
-				) withFilter;
-				IdtMap.iter (fun checkNodeId fb ->
-					if fb then () else
-					begin
-						(if !isNotFirst then output_string oc " OR");
-						isNotFirst := true;
+					) badFuns;
+					IdtSet.iter (fun checkNodeId ->
+						(if !isNotFstInGrp then output_string oc " AND ");
+						isNotFstInGrp := true;
 						let checkNode = DG.findnode checkNodeId dg
 						in
 						let checkname = checkNode.nkind.nodelabel checkNode.ixtypemap
 						in
-						output_string oc (" " ^ checkname ^ " holds")
-					end
-				) withCheck;
+						output_string oc (checkname ^ " holds")
+					) badChecks;
+					(if needsBrackets then output_string oc ")");
+				) allResults;
 				output_string oc "\"}"
 			end
 		) resInps;
@@ -437,7 +443,6 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-
 	let dgsimpl3 = GrbOptimize.removeDead (GrbOptimize.removeOutputControlDims dgstraightened)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3 0
@@ -456,7 +461,7 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgsimpl5 = GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))
+	let dgsimpl5 =  (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in
@@ -465,7 +470,25 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl5;
 	close_out oc; 
-	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl5)))))))
+	let dgsimpl6 = GrbOptimize.dimFunDepsToDimEqs (GrbOptimize.removeDead dgsimpl5)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified6.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6;
+	close_out oc; 
+	let dgsimpl6a = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbOptimize.reduceLongorDimension (GrbOptimize.removeDead (GrbOptimize.reduceAndDimension (GrbOptimize.removeDead (GrbOptimize.foldAndsTogether dgsimpl6)))))))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6a 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified6a.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6a;
+	close_out oc; 
+	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl6a)))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in

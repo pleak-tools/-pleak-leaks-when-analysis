@@ -1183,128 +1183,6 @@ let reduceOneAndDimension dg n =
 	end
 ;;
 
-(* TO BE ADDED BEGIN
-
-let reduceOneAndDimension dg n =
-	if n.nkind.nodeintlbl <> NNAnd then None else
-	if not onlyOutputSuccs then None else
-	let AITT a = n.inputindextype
-	and eqDimList = collectReducedDims dg n
-	in
-	if eqDimList = [] then None else
-	begin
-		let changedg = ref dg
-		in
-		let pushTogetherDims origLen eqDimsList =
-			let usedDims =
-				let res = Array.make origLen true
-				in
-				List.iter (fun (_,d) -> res.(d) <- false) eqDimsList;
-				res
-			in
-			let eqMap = 
-				let res = Array.init origLen (fun x -> x)
-				in
-				List.iter (fun (d1,d2) -> res.(d2) <- d1) eqDimsList;
-				res
-			in
-			let newLen = origLen - (List.length eqDimsList)
-			in
-			let oldToNew = Array.make (-1) origLen
-			and newToOld = Array.make 0 newLen
-			in
-			if origLen > 0 then
-			begin
-				let currPtr = ref 0
-				in
-				for i = 0 to (Array.length usedDims) - 1 do
-					if usedDims.(i) then
-					begin
-						oldToNew.(i) <- !currPtr;
-						currPtr := !currPtr + 1
-					end else
-						oldToNew.(i) <- oldToNew.(eqMap.(i))
-				done;
-				for i = 0 to (Array.length usedDims) - 1 do
-					if usedDims.(i) then
-						newToOld.(oldToNew.(i)) <- i
-				done
-			end;
-			(newLen, oldToNew, newToOld)
-		let pushTogetherMap srcOldLen srcNewLen tgtOldLen tgtNewLen srcOldToNew srcNewToOld tgtOldToNew tgtNewToOld oldMap =
-			Array.init srcNewLen (fun x -> tgtOldToNew.(oldMap.(srcNewToOld.(x))))
-		in
-		let pushEqDimsAlongAMap eqDimsList naLen nbLen pushMap =
-			let eqMap = 
-				let res = Array.init naLen (fun x -> x)
-				in
-				List.iter (fun (d1,d2) -> res.(d2) <- d1) eqDimsList;
-				res
-			in
-			let downEqList =
-				let res = ClassRepr.init nbLen
-				in
-				for d1 = 0 to (Array.length na0) - 1 do
-					for d2 = d1 + 1 to (Array.length na0) - 1 do
-						let dd1 = eqMap.(d1)
-						and dd2 = eqMap.(d2)
-						in
-						if dd1 = dd2 then
-						begin
-							let s1 = pushMap.(d1)
-							and s2 = pushMap.(d2)
-							in 
-							if (s1 <> -1) && (s2 <> -1) then
-								ClassRepr.joinClasses res s1 s2
-						end
-					done;
-				done;
-				let llres = ref []
-				in
-				for i = 0 to (ClassRepr.length res) - 1 do
-					let j = ClassRepr.getClass i
-					in
-					if i <> j then llres := (j,i) :: !llres
-				done;
-				!llres
-			in
-			downEqList
-		in
-		let pushEqDimsListDownNode n eqDimsList =
-			let (AITT a) = n.inputindextype
-			and (AITT b) = n.outputindextype
-			and (IxM mm) = n.ixtypemap
-			in
-			let na0 = a.(0)
-			and nb0 = b.(0)
-			and Some ((), _, fwdmap) = mm.(0)
-			in
-			let invFwdMap =
-				let res = Array.make (Array.length na0) (-1)
-				in
-				Array.iteri (fun idx ptr -> res.(ptr) <- idx) fwdmap;
-				res
-			in
-			pushEqDimsAlongAMap eqDimsList (Array.length na0) (Array.length nb0) invFwdMap
-		in
-		let pushEqDimsListDownEdge eqDimsList srcb0 tgta0 backmap =
-			pushEqDimsAlongAMap eqDimsList (Array.length srcb0) (Array.length tgta0) backmap
-		in
-		let rec updateNode nid eqDimsList addedEqDimsNodes incomingConnection =
-			let n = DG.findnode nid !changedg
-			in
-			let downEqDimsList = pushEqDimsListDownNode n eqDimsList
-			in
-			
-
-
-	end
-;;
-
-WILL CONTINUE WHEN THE DELIVERABLE HAS BEEN WRITTEN
-
-TO BE ADDED END *)
-
 let reduceAndDimension dg = DG.foldnodes (fun nold dgcurr -> match reduceOneAndDimension dgcurr (DG.findnode nold.id dgcurr) with None -> dgcurr | Some dg' -> dg') dg dg;;
 
 let reduceOneLongorDimension dg n =
@@ -1888,6 +1766,239 @@ let singleOutputPerValue dg =
 	) dg dg
 ;;
 
+let dimFunDepsToDimEqs dg =
+	let maxAllowedLen = 5
+	in
+	let foundDeps = DG.foldnodes (fun n res ->
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		in
+		let isize = Array.length na.(0)
+		and osize = Array.length nb.(0)
+		in
+		IdtMap.add n.id (Array.make_matrix isize isize [], Array.make_matrix osize osize []) res
+	) dg IdtMap.empty
+	in
+	(* initialize deps *)
+	DG.foldnodes (fun n () ->
+		if (match n.nkind.nodeintlbl with NNIsEq -> false | _ -> true) then () else
+		let possTakeDimDim = ref None
+		and possAddrFunDimAndName = ref None
+		in
+		DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
+			let Some (srcid,_,backmap) = cc.(0)
+			in
+			let srcn = DG.findnode srcid dg
+			in
+			match srcn.nkind.nodeintlbl with
+			| NNTakeDim _ ->
+				let (AITT srcnb) = srcn.outputindextype
+				in
+				if (Array.length srcnb.(0)) = 1 then possTakeDimDim := Some backmap.(0) else ()
+			| NNAddrGen (genid, gendim, _) ->
+				possAddrFunDimAndName := Some (backmap.(gendim), genid, gendim);
+			| _ -> ()
+		) n ();
+		if (match !possTakeDimDim, !possAddrFunDimAndName with | None,_ | _,None -> true | _,_ -> false) then () else
+		let Some takeDimDim = !possTakeDimDim
+		and Some (addrFunDim, addrFunId, addrFunLevel) = !possAddrFunDimAndName
+		in
+		let (inpEqs, outpEqs) = IdtMap.find n.id foundDeps
+		in
+		inpEqs.(takeDimDim).(addrFunDim) <- [Left (addrFunId, addrFunLevel)] :: inpEqs.(takeDimDim).(addrFunDim);
+		outpEqs.(takeDimDim).(addrFunDim) <- [Left (addrFunId, addrFunLevel)] :: outpEqs.(takeDimDim).(addrFunDim);
+		inpEqs.(addrFunDim).(takeDimDim) <- [Right (addrFunId, addrFunLevel)] :: inpEqs.(addrFunDim).(takeDimDim);
+		outpEqs.(addrFunDim).(takeDimDim) <- [Right (addrFunId, addrFunLevel)] :: outpEqs.(addrFunDim).(takeDimDim);
+	) dg ();
+	let simplifyMapping ll =
+		let rec simplifyAcc toLeft toRight = match toLeft, toRight with
+			| xs, [] -> List.rev xs
+			| [], (x::xs) -> simplifyAcc [x] xs
+			| (x::xs), (y::ys) -> ( match x,y with
+				| Left z1, Right z2
+				| Right z2, Left z1 when z1 = z2 -> simplifyAcc xs ys
+				| _,_ -> simplifyAcc (y::x::xs) ys
+			)
+		in
+		simplifyAcc [] ll
+	in
+	let moveDownOnce () =
+		let anyChanges = ref false
+		in
+		DG.foldnodes (fun n () ->
+			let (IxM nc) = n.ixtypemap
+			in
+			let (inpEqs,outpEqs) = IdtMap.find n.id foundDeps
+			and Some ((),_,fwdmap) = nc.(0)
+			in
+			let size = Array.length fwdmap
+			in
+			for i = 0 to size - 1 do
+				let srci = fwdmap.(i)
+				in
+				for j = 0 to size - 1 do
+					let srcj = fwdmap.(j)
+					in
+					List.iter (fun path ->
+						if List.mem path outpEqs.(i).(j) then () else
+						begin
+							outpEqs.(i).(j) <- path :: outpEqs.(i).(j);
+							anyChanges := true
+						end
+					) inpEqs.(srci).(srcj)
+				done
+			done
+		) dg ();
+		DG.foldedges (fun ((IxM cc, _), ntgt, _) () ->
+			let Some (srcid,_,backmap) = cc.(0)
+			in
+			let nsrc = DG.findnode srcid dg
+			in
+			let (_,outpEqs) = IdtMap.find nsrc.id foundDeps
+			and (inpEqs,_) = IdtMap.find ntgt.id foundDeps
+			in
+			let size = Array.length backmap
+			in
+			for i = 0 to size - 1 do
+				let tgti = backmap.(i)
+				in
+				for j = 0 to size - 1 do
+					let tgtj = backmap.(j)
+					in
+					List.iter (fun path ->
+						if List.mem path inpEqs.(tgti).(tgtj) then () else
+						begin
+							inpEqs.(tgti).(tgtj) <- path :: inpEqs.(tgti).(tgtj);
+							anyChanges := true
+						end
+					) outpEqs.(i).(j)
+				done
+			done
+		) dg ();
+		!anyChanges
+	in
+	let moveDown () = 
+		let anyChanges = ref false
+		in
+		while moveDownOnce () do
+			anyChanges := true
+		done;
+		!anyChanges
+	in
+	let combineOnce () =
+		let anyChanges = ref false
+		in
+		let combineSingleArray eqs =
+			let size = Array.length eqs
+			in
+			for i = 0 to (size - 1) do
+				for j = 0 to (size - 1) do
+					for k = 0 to (size - 1) do
+						List.iter (fun path1 ->
+							List.iter (fun path2 ->
+								let path = simplifyMapping (path1 @ path2)
+								in
+								if ((List.length path) > maxAllowedLen) || (List.mem path eqs.(i).(k)) then () else
+								begin
+									eqs.(i).(k) <- path :: eqs.(i).(k);
+									anyChanges := true
+								end
+							) eqs.(j).(k)
+						) eqs.(i).(j)
+					done
+				done
+			done
+		in
+		IdtMap.iter (fun _ (inpEqs,outpEqs) ->
+			combineSingleArray inpEqs;
+			combineSingleArray outpEqs
+		) foundDeps;
+		!anyChanges
+	in
+	let combine () =
+		let anyChanges = ref false
+		in
+		while combineOnce () do
+			anyChanges := true
+		done;
+		!anyChanges
+	in
+	let anyChanges = ref true
+	in
+	while !anyChanges do
+		let x = moveDown ()
+		in
+		let y = combine ()
+		in
+		anyChanges := x || y
+	done;
+	DG.foldnodes (fun n currdg ->
+		if (match n.nkind.nodeintlbl with | NNOutput _ -> false | NNAnd -> true | _ -> true) then currdg else
+		let (dgref, newCtrlNode) = if n.nkind.nodeintlbl = NNAnd then ((ref dg), n) else
+		begin
+			let possCtrlSrcId = ref None
+			and possCtrlMap = ref None
+			and possCtrlEdgeId = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
+				match prt with
+					| PortSingleB -> begin
+						let Some (srcid,_,backmap) = cc.(0)
+						in
+						possCtrlSrcId := Some srcid;
+						possCtrlMap := Some backmap;
+						possCtrlEdgeId := Some eid
+					end
+					| _ -> ()
+			) n ();
+			let Some ctrlSrcId = !possCtrlSrcId
+			and Some ctrlMap = !possCtrlMap
+			and Some ctrlEdgeId = !possCtrlEdgeId
+			in
+			let (AITT na) = n.inputindextype
+			in
+			let newCtrlNode = {
+				nkind = nkAnd;
+				id = NewName.get ();
+				inputindextype = n.inputindextype;
+				outputindextype = n.outputindextype;
+				ixtypemap = identityIndexMap () n.inputindextype;
+				inputs = PortMap.empty;
+			}
+			in
+			let dgref = ref (DG.addedge ((IxM [| Some (ctrlSrcId ,0, ctrlMap) |], NewName.get ()), newCtrlNode.id, PortStrictB) (DG.addedge ((identityIndexMap newCtrlNode.id n.inputindextype, ctrlEdgeId), n.id, PortSingleB) (DG.addnode newCtrlNode currdg)))
+			in
+			(dgref, newCtrlNode)
+		end
+		in
+		let (inpEqs, _) = IdtMap.find n.id foundDeps
+		and (AITT na) = n.inputindextype
+		in
+		let size = Array.length inpEqs
+		in
+		for i = 0 to (size - 2) do
+			for j = (i+1) to (size - 1) do
+				if List.mem [] inpEqs.(i).(j) then
+				begin
+					let dimeqindextype = AITT [| [|na.(0).(i); na.(0).(j) |] |]
+					in
+					let dimEqNode = {
+						nkind = nkDimEq;
+						id = NewName.get ();
+						inputindextype = dimeqindextype;
+						outputindextype = dimeqindextype;
+						ixtypemap = identityIndexMap () dimeqindextype;
+						inputs = PortMap.empty;
+					}
+					in
+					dgref := DG.addedge ((IxM [| Some (dimEqNode.id, 0, [|i;j|]) |], NewName.get ()), newCtrlNode.id, PortStrictB) (DG.addnode dimEqNode !dgref)
+				end else ()
+			done
+		done;
+		!dgref
+	) dg dg
+;;
+	
 let findDataEdges dg =
 	let res = ref IdtSet.empty
 	and combineedges = ref IdtSet.empty
@@ -2188,8 +2299,8 @@ let moveOneFilterNode dg oldeid =
 			in
 			if prt = PortSingleB then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
 		) n (None, None)
-		and Some (flt2srcid, flt2eid, flt2backmap) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) foundflt ->
-			let Some (srcid, flt2eid, backmap) = cc.(0)
+		and Some (flt2srcid, flt2eid, flt2backmap) = DG.nodefoldedges (fun ((IxM cc, flt2eid), _, prt) foundflt ->
+			let Some (srcid, _, backmap) = cc.(0)
 			in
 			if prt = PortSingleB then Some (srcid, flt2eid, backmap) else foundflt
 		) ntgt None

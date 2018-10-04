@@ -500,7 +500,7 @@ let findBPPrPtrs ptrcollection usedefs defuses dg0 =
 				in
 				let addrgennodes = Array.init dindepnum (fun c ->
 					let agnode = {
-						nkind = nkAddrGen dptr (c + trunklen) (trunklen + sindepnum);
+						nkind = nkAddrGen sptr (c + trunklen) (trunklen + sindepnum);
 						id = NewName.get ();
 						inputs = PortMap.empty;
 						inputindextype = AITT [| sixtcomp0 |];

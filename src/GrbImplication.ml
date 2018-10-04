@@ -41,12 +41,14 @@ let writeItAllToZ3 dg oc =
 	and vIdAndArgsToStr = selIdAndArgsToStrWithPref "v" "x"
 	and fIdAndArgsToStr = selIdAndArgsToStrWithPref "f" "x"
 	in
-	output_string oc "(declare-sort S)
-(declare-fun sord (S S) Bool)
+	output_string oc "(declare-sort S)\n";
+(*
+"(declare-fun sord (S S) Bool)
 (assert (forall ((x S) (y S)) (or (sord x y) (= x y) (sord y x))))
 (assert (forall ((x S)) (not (sord x x))))
 (assert (forall ((x S) (y S)) (=> (sord x y) (not (sord y x)))))
 (assert (forall ((x S) (y S) (z S)) (=> (and (sord x y) (sord y z)) (sord x z))))\n";
+*)
 	DG.foldnodes (fun n () ->
 		let (AITT nb) = n.outputindextype
 		in
@@ -84,7 +86,7 @@ let writeItAllToZ3 dg oc =
 		output_string oc " (";
 		Buffer.output_buffer oc nbinps;
 		output_string oc ") S)\n";
-		for i = 1 to inpnum do
+(*		for i = 1 to inpnum do
 			let invFunName = (addrFunName tag dimnum) ^ "_inv" ^ (string_of_int i)
 			in
 			output_string oc "(declare-fun ";
@@ -101,7 +103,7 @@ let writeItAllToZ3 dg oc =
 			Buffer.output_buffer oc funargs;
 			output_string oc ")) )))\n"
 		done;
-	) addrgens;
+*)	) addrgens;
 	DG.foldnodes (fun n () -> (* about the flow *)
 		let (AITT na) = n.inputindextype
 		and (AITT nb) = n.outputindextype
@@ -242,6 +244,48 @@ let writeItAllToZ3 dg oc =
 			output_string oc " ";
 			output_string oc (vIdAndArgsToStr n.id fwdmap);
 			output_string oc ")))\n";
+
+			let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
+			in
+			let freeDims =
+				let res = Array.make (Array.length na.(0)) true
+				in
+				Array.iter (fun x -> res.(x) <- false
+				) fwdmap;
+				res
+			in
+			let qvarsNAminusB = Buffer.create 16
+			and isFirstInBuf = ref true
+			in
+			Array.iteri (fun idx b ->
+				if b then
+				begin
+					(if not !isFirstInBuf then Buffer.add_char qvarsNAminusB ' ');
+					isFirstInBuf := false;
+					Buffer.add_string qvarsNAminusB "(x";
+					Buffer.add_string qvarsNAminusB (string_of_int idx);
+					Buffer.add_string qvarsNAminusB " S)"
+				end else ()				
+			) freeDims;
+			let needsQA = (Array.length fwdmap) > 0
+			and needsQE = (Array.length na.(0)) > (Array.length fwdmap)
+			in
+			output_string oc "(assert ";
+			(if needsQA then output_string oc ("(forall (" ^ qvarsNB ^ ") "));
+			(if needsQE then begin
+				output_string oc "(exists (";
+				Buffer.output_buffer oc qvarsNAminusB;
+				output_string oc ") " end
+			);
+			output_string oc "(=> ";
+			output_string oc (vIdAndArgsToStr n.id fwdmap);
+			output_string oc " ";
+			output_string oc (vIdAndArgsToStr previd backmap);
+			output_string oc ")";
+			(if needsQE then output_string oc ")");
+			(if needsQA then output_string oc ")");
+			output_string oc ")\n"
+(*
 			output_string oc "(assert ";
 			output_string oc ("(forall (" ^ qvarsNA ^ ") ");
 			output_string oc "(=> (not ";
@@ -250,7 +294,7 @@ let writeItAllToZ3 dg oc =
 			output_string oc (vIdAndArgsToStr previd backmap);
 			output_forall_close ();
 			output_string oc ")))\n";
-		end
+*)		end
 		| NNId
 		| NNNot -> begin
 			let isNeg = match n.nkind.nodeintlbl with | NNId -> false | _ -> true
@@ -826,13 +870,46 @@ let writeBooleanDescToZ3 dg oc =
 				output_string oc " ";
 				output_string oc (idAndArgsToStr n.id fwdmap);
 				output_string oc ")))\n";
+				let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
+				in
+				let freeDims =
+					let res = Array.make (Array.length na.(0)) true
+					in
+					Array.iter (fun x -> res.(x) <- false
+					) fwdmap;
+					res
+				in
+				let qvarsNAminusB = Buffer.create 16
+				and isFirstInBuf = ref true
+				in
+				Array.iteri (fun idx b ->
+					if b then
+					begin
+						(if not !isFirstInBuf then Buffer.add_char qvarsNAminusB ' ');
+						isFirstInBuf := false;
+						Buffer.add_string qvarsNAminusB "(x";
+						Buffer.add_string qvarsNAminusB (string_of_int idx);
+						Buffer.add_string qvarsNAminusB " S)"
+					end else ()				
+				) freeDims;
+				let needsQA = (Array.length fwdmap) > 0
+				and needsQE = (Array.length na.(0)) > (Array.length fwdmap)
+				in
 				output_string oc "(assert ";
-				output_string oc ("(forall (" ^ qvarsNA ^ ") ");
-				output_string oc "(=> (not ";
+				(if needsQA then output_string oc ("(forall (" ^ qvarsNB ^ ") "));
+				(if needsQE then begin
+					output_string oc "(exists (";
+					Buffer.output_buffer oc qvarsNAminusB;
+					output_string oc ") " end
+				);
+				output_string oc "(=> ";
 				output_string oc (idAndArgsToStr n.id fwdmap);
-				output_string oc ") (not ";
+				output_string oc " ";
 				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc "))))\n";
+				output_string oc ")";
+				(if needsQE then output_string oc ")");
+				(if needsQA then output_string oc ")");
+				output_string oc ")\n"
 			end
 			| NNId
 			| NNNot -> begin
@@ -1236,19 +1313,20 @@ let checkFlows dg possFName =
 	in
 	let answers = IdtSet.fold (fun inpNodeId m1 ->
 		let answersForInpNode = RLMap.fold (fun outpName outpIds m2 ->
-			let withAll = answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds allFilterNodes allCheckNodes
+			(* TODO: https://en.wikipedia.org/wiki/Group_testing is exactly the thing we are trying to do below *)
+			let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
+			and withAll = ref false
+			and withNone = ref false
 			in
-			let withNone = answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds IdtSet.empty IdtSet.empty
-			in
-			let withOneFilter = IdtSet.fold (fun filterNodeId mm ->
-				IdtMap.add filterNodeId (answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.remove filterNodeId allFilterNodes) allCheckNodes) mm
-			) allFilterNodes IdtMap.empty
-			in
-			let withOneCheck = IdtSet.fold (fun checkNodeId mm ->
-				IdtMap.add checkNodeId (answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds allFilterNodes (IdtSet.remove checkNodeId allCheckNodes)) mm
-			) allCheckNodes IdtMap.empty
-			in
-			RLMap.add outpName (withAll, withNone, withOneFilter, withOneCheck) m2
+			IdtSet.subsetiter (fun someFilters ->
+				IdtSet.subsetiter (fun someChecks ->
+					if answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.diff allFilterNodes someFilters) (IdtSet.diff allCheckNodes someChecks) then begin
+						(if (IdtSet.is_empty someFilters) && (IdtSet.is_empty someChecks) then withAll := true);
+						(if (IdtSet.equal someFilters allFilterNodes) && (IdtSet.equal someChecks allCheckNodes) then withNone := true)
+					end else allResults := (someFilters, someChecks) :: !allResults
+				) allCheckNodes
+			) allFilterNodes;
+			RLMap.add outpName (!withAll, !withNone, !allResults) m2
 		) outputNames RLMap.empty
 		in
 		IdtMap.add inpNodeId answersForInpNode m1
