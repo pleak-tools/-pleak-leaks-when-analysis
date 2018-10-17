@@ -1268,6 +1268,11 @@ let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks 
 ;;
 
 let checkFlows dg possFName =
+	let onlyMinimalResults allResults =
+		let isMinimal (badFun,badCheck) = not (List.exists (fun (lFun,lCheck) -> ((lFun <> badFun) || (lCheck <> badCheck)) && (IdtSet.subset lFun badFun) && (IdtSet.subset lCheck badCheck)) allResults)
+		in
+		List.filter isMinimal allResults
+	in
 	let (ic,oc) = match possFName with
 		| Some fname -> let occ = open_out fname in (None, occ)
 		| None -> let (icc,occ) = Unix.open_process "z3 -in" in (Some icc, occ)
@@ -1313,7 +1318,8 @@ let checkFlows dg possFName =
 	in
 	let answers = IdtSet.fold (fun inpNodeId m1 ->
 		let answersForInpNode = RLMap.fold (fun outpName outpIds m2 ->
-			(* TODO: https://en.wikipedia.org/wiki/Group_testing is exactly the thing we are trying to do below *)
+			(* TODO: https://en.wikipedia.org/wiki/Group_testing is related to the thing we are trying to do below. We are trying to learn a monotone boolean function. Its atoms are not necessarily singleton sets, though *)
+			(* See e.g. Boris Kovalerchuk, Evangelos Triantaphyllou, Aniruddha S. Deshpande, Evgenii Vityaev. Interactive Learning of Monotone Boolean Functions. Information Sciences 94, pp. 87-118, 1996 *)
 			let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
 			and withAll = ref false
 			and withNone = ref false
@@ -1326,7 +1332,7 @@ let checkFlows dg possFName =
 					end else allResults := (someFilters, someChecks) :: !allResults
 				) allCheckNodes
 			) allFilterNodes;
-			RLMap.add outpName (!withAll, !withNone, !allResults) m2
+			RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
 		) outputNames RLMap.empty
 		in
 		IdtMap.add inpNodeId answersForInpNode m1

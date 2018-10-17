@@ -91,6 +91,8 @@ let printgraph oc dg = (* Sends the description of dg in the dot format to the c
 			Array.iteri (fun idx n -> if idx <> n then res := true) backmap;
 			!res
 		in
+		let wiredesc = (portdesc prt).wirename ^ "\\{" ^ (NewName.to_string eid) ^ "\\}"
+		in
 		if (Array.length m = 1) && (match m.(0) with None -> false | Some _ -> true) && (isNonIdentity m.(0)) then
 		begin
 			let (AITT b) = nn.inputindextype
@@ -101,12 +103,12 @@ let printgraph oc dg = (* Sends the description of dg in the dot format to the c
 			in
 			let (AITT a) = srcn.outputindextype
 			in
-			output_string oc ((dotedgeid eid) ^ "[shape=Mrecord label=\"{ " ^ (portdesc prt).wirename ^ " | ");
+			output_string oc ((dotedgeid eid) ^ "[shape=Mrecord label=\"{ " ^ wiredesc ^ " | ");
 			outputMapInVContext a b m MDBackward;
 			output_string oc " }\"];\n"
 		end else
 		begin
-			output_string oc ((dotedgeid eid) ^ " [shape=plaintext label=\"" ^ (portdesc prt).wirename ^ "\" width=0 height=0];\n")
+			output_string oc ((dotedgeid eid) ^ " [shape=plaintext label=\"" ^ wiredesc ^ "\" width=0 height=0];\n")
 		end;
 		DG.foldedgesources (fun srcid () ->
 			output_string oc ( (dotnodeid srcid) ^ ":s -> " ^ (dotedgeid eid) ^ ":n [dir=none];\n" )

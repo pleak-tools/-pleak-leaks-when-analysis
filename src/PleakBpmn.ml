@@ -101,7 +101,13 @@ let grreprAddEdge grrepr edgerec =
 ;;
 
 let grreprAddNode grrepr (noderec : nodeonpicturetype) =
-	{ grrepr with nodes = IdtMap.add noderec.id (noderec, IdtSet.empty, IdtSet.empty) grrepr.nodes }
+	let (outgs,incs) = try
+		let (_,x,y) = IdtMap.find noderec.id grrepr.nodes
+		in
+		(x,y)
+	with Not_found -> (IdtSet.empty, IdtSet.empty)
+	in
+	{ grrepr with nodes = IdtMap.add noderec.id (noderec, outgs, incs) grrepr.nodes }
 ;;
 
 let grreprFindEdgesByEnds grrepr srcid tgtid =
@@ -109,6 +115,42 @@ let grreprFindEdgesByEnds grrepr srcid tgtid =
 	and (_, _, tgtincom) = IdtMap.find tgtid grrepr.nodes
 	in
 	IdtSet.inter srcoutg tgtincom
+;;
+
+let areEdgesOK grrepr =
+	IdtMap.iter (fun nid ((ndesc : nodeonpicturetype), nouts, nincs) ->
+		IdtSet.iter (fun edgeid ->
+			if IdtMap.mem edgeid grrepr.edges then
+			begin
+				let edge = IdtMap.find edgeid grrepr.edges
+				in
+				if edge.src <> nid then
+					print_endline ("Edge no. " ^ (NewName.to_string edgeid) ^ " leaves node no. " ^ (NewName.to_string edge.src) ^ ", but is included among outgoing edges of node no. " ^ (NewName.to_string nid))
+			end
+			else
+				print_endline ("Edge no. " ^ (NewName.to_string edgeid) ^ " does not exist, but leaves node no. " ^ (NewName.to_string nid))
+		) nouts;
+		IdtSet.iter (fun edgeid ->
+			if IdtMap.mem edgeid grrepr.edges then
+			begin
+				let edge = IdtMap.find edgeid grrepr.edges
+				in
+				if edge.tgt <> nid then
+					print_endline ("Edge no. " ^ (NewName.to_string edgeid) ^ " enters node no. " ^ (NewName.to_string edge.tgt) ^ ", but is included among incoming edges of node no. " ^ (NewName.to_string nid))
+			end
+			else
+				print_endline ("Edge no. " ^ (NewName.to_string edgeid) ^ " does not exist, but enters node no. " ^ (NewName.to_string nid))
+		) nincs
+	) grrepr.nodes;
+	IdtMap.iter (fun eid edge ->
+		let (_, srcout, _) = IdtMap.find edge.src grrepr.nodes
+		and (_, _, tgtin) = IdtMap.find edge.tgt grrepr.nodes
+		in
+		(if not (IdtSet.mem eid srcout) then
+			print_endline ("Edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string edge.src) ^ " to " ^ (NewName.to_string edge.tgt) ^ " is missing at the source's outgoing edge set") );
+		(if not (IdtSet.mem eid tgtin) then
+			print_endline ("Edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string edge.src) ^ " to " ^ (NewName.to_string edge.tgt) ^ " is missing at the target's incoming edge set") );
+	) grrepr.edges
 ;;
 
 let grreprPutTaskToSeqFlow grrepr edgeid noderec =
@@ -579,19 +621,15 @@ let commentsToAttrs grrepr =
 	IdtMap.fold (fun nid ((ndesc : nodeonpicturetype), noutg, nincom) ngr ->
 		if ndesc.kind = NOPComment then
 		begin
-			let comconnid = IdtSet.choose nincom
+			let comconnid = grreprIncomingEdgeOfKind ngr nid EOPComment
 			in
 			let comconn = IdtMap.find comconnid ngr.edges
 			in
 			let (srcn, srcoutg, srcincom) = IdtMap.find comconn.src ngr.nodes
 			in
 			let newsrcn = {srcn with attrs = RLMap.add "comment" (RLMap.find "comment" ndesc.attrs) srcn.attrs}
-			and newoutg = IdtSet.remove comconnid srcoutg
-			and newedges = IdtMap.remove comconnid ngr.edges
-			in {
-				nodes = IdtMap.add comconn.src (newsrcn, newoutg, srcincom) ngr.nodes;
-				edges = newedges;
-			}
+			in
+			grreprRemoveNode (grreprAddNode ngr newsrcn) nid
 		end else ngr
 	) grrepr.nodes grrepr
 ;;
@@ -617,6 +655,32 @@ let defaultsToEdgeAttrs (grrepr : graphgraphtype) =
 	) grrepr.nodes grrepr
 ;;
 
+let lastCommonAncestor grrepr nid1 nid2 =
+	let rec myAncestors nid =
+		let (ndesc, noutps, ninps) = IdtMap.find nid grrepr.nodes
+		in
+		try
+			let containingEdgeId = IdtSet.choose (IdtSet.filter (fun edgeid ->
+				let edge = IdtMap.find edgeid grrepr.edges
+				in
+				edge.kind = EOPContain
+			) ninps)
+			in
+			let cEdge = IdtMap.find containingEdgeId grrepr.edges
+			in
+			nid :: (myAncestors cEdge.src)
+		with Not_found -> [nid]
+	and lastCommon (x::xs) (y::ys) = match xs,ys with
+		| [],_
+		| _,[] -> x
+		| (u::us), (v::vs) -> if u = v then lastCommon xs ys else x
+	in
+	let l1 = myAncestors nid1
+	and l2 = myAncestors nid2
+	in
+	lastCommon (List.rev l1) (List.rev l2)
+;;
+
 let joinSameNameDatasets grrepr =
 	let ds2id = ref RLMap.empty
 	in
@@ -628,21 +692,33 @@ let joinSameNameDatasets grrepr =
 			let origid = try RLMap.find datasetname !ds2id with Not_found -> nid
 			in
 			if origid = nid then (ds2id := RLMap.add datasetname nid !ds2id; currgrrepr) else
+			begin
 			let (currndesc, curroutps, currinps) = IdtMap.find nid currgrrepr.nodes
 			in
 			let grrepr1 = IdtSet.fold (fun edgeid tmpgrrepr ->
-				let edgerec = IdtMap.find edgeid tmpgrrepr.edges
+				let edge = IdtMap.find edgeid tmpgrrepr.edges
 				in
-				{nodes = tmpgrrepr.nodes; edges = IdtMap.add edgeid {edgerec with tgt = origid} tmpgrrepr.edges;}
+				if edge.kind = EOPWrite then grreprMoveEdgeTarget tmpgrrepr edgeid origid else tmpgrrepr
 			) currinps currgrrepr
 			in
 			let grrepr2 = IdtSet.fold (fun edgeid tmpgrrepr ->
-				let edgerec = IdtMap.find edgeid tmpgrrepr.edges
+				let edge = IdtMap.find edgeid tmpgrrepr.edges
 				in
-				{nodes = tmpgrrepr.nodes; edges = IdtMap.add edgeid {edgerec with src = origid} tmpgrrepr.edges;}
+				if edge.kind = EOPRead then grreprMoveEdgeSource tmpgrrepr edgeid origid else tmpgrrepr
 			) curroutps grrepr1
 			in
-			{grrepr2 with nodes = IdtMap.remove nid grrepr2.nodes}
+			let ancId = lastCommonAncestor grrepr2 origid nid
+			in
+			let (orign, origoutps, originps) = IdtMap.find origid grrepr2.nodes
+			in
+			let grrepr3 = IdtSet.fold (fun edgeid tmpgrrepr ->
+				let edge = IdtMap.find edgeid tmpgrrepr.edges
+				in
+				if edge.kind = EOPContain then grreprMoveEdgeSource tmpgrrepr edgeid ancId else tmpgrrepr
+			) originps grrepr2
+			in
+			grreprRemoveNode grrepr3 nid
+			end
 		end
 		else currgrrepr
 	) grrepr.nodes grrepr
@@ -690,42 +766,66 @@ let dissolveNonreplSubproc grrepr = (* Assumption: a single edge out of the star
 			let startnodes = findProcessStartNodes currgrrepr nid
 			and endnodes = findProcessEndNodes currgrrepr nid
 			in
-			if ((List.length startnodes) <> 1) || ((List.length endnodes) <> 1) then currgrrepr else
-			let (startnode, startnoutg, startnincom) = IdtMap.find (List.hd startnodes) currgrrepr.nodes
-			and (endnode, endnodeoutg, endnodeincom) = IdtMap.find (List.hd endnodes) currgrrepr.nodes
+			let (endnodesByType, continue) = List.fold_right (fun enid (res,c) ->
+				if (not c) then (res,c) else
+				let (endnode,_,_) = IdtMap.find enid currgrrepr.nodes
+				in
+				if endnode.kind <> NOPEvent then (res, false) else
+				let entype = RLMap.find "eventtype" endnode.attrs
+				in
+				if RLMap.mem entype res then (res,false) else ((RLMap.add entype enid res), true)
+			) endnodes (RLMap.empty, true)
 			in
-			if (startnode.kind <> NOPEvent) || (endnode.kind <> NOPEvent) then currgrrepr else
+			if ((List.length startnodes) <> 1) || (not continue) || (not (RLMap.mem "plain" endnodesByType)) then currgrrepr else
+			let (startnode, startnoutg, startnincom) = IdtMap.find (List.hd startnodes) currgrrepr.nodes
+(*			and (endnode, endnodeoutg, endnodeincom) = IdtMap.find (List.hd endnodes) currgrrepr.nodes *)
+			in
+			if (startnode.kind <> NOPEvent) then currgrrepr else
 			let (currndesc, curroutg, currincom) = IdtMap.find nid currgrrepr.nodes
 			in
 			let gr1 = IdtSet.fold (fun proutedgeid gr' ->
 				let proutedge = IdtMap.find proutedgeid gr'.edges
 				in
-				if proutedge.kind <> EOPSeqFlow then gr' else
-				grreprMoveEdgeSource gr' proutedgeid endnode.id
+				if proutedge.kind = EOPSeqFlow then
+					grreprMoveEdgeSource gr' proutedgeid (RLMap.find "plain" endnodesByType)
+				else if proutedge.kind = EOPBoundary then
+				begin
+					let (bnode,bnoutg,bnincom) = IdtMap.find proutedge.tgt gr'.nodes
+					in
+					let bnseqoutedgeid = grreprOutgoingEdgeOfKind gr' bnode.id EOPSeqFlow
+					in
+					let res = grreprRemoveNode (grreprMoveEdgeSource gr' bnseqoutedgeid (RLMap.find (RLMap.find "eventtype" bnode.attrs) endnodesByType)) bnode.id
+					in
+					(areEdgesOK res; res)
+				end else gr'
 			) curroutg currgrrepr
 			in
-			let gr2 = IdtSet.fold (fun prinedgeid gr' ->
+			let gr2 = (areEdgesOK gr1; IdtSet.fold (fun prinedgeid gr' ->
 				let prinedge = IdtMap.find prinedgeid gr'.edges
 				in
 				if prinedge.kind <> EOPSeqFlow then gr' else
 				grreprMoveEdgeTarget gr' prinedgeid startnode.id
-			) currincom gr1
+			) currincom gr1)
 			in
-			let gr3 = if (RLMap.find "eventtype" startnode.attrs) = "plain" then
+			let gr3 = (print_endline "check gr2"; areEdgesOK gr2; if (RLMap.find "eventtype" startnode.attrs) = "plain" then
 				grreprRemoveNode (cutSequenceOverNode gr2 startnode.id) startnode.id
 			else
 				let (sn',snog',snic') = IdtMap.find startnode.id gr2.nodes
 				in
-				{gr2 with nodes = IdtMap.add startnode.id ({sn' with attrs = RLMap.add "eventtype" "catch" sn'.attrs}, snog',snic') grrepr.nodes}
+				{gr2 with nodes = IdtMap.add startnode.id ({sn' with attrs = RLMap.add "eventkind" "catch" sn'.attrs}, snog',snic') gr2.nodes}
+			)
 			in
-			let gr4 = if (RLMap.find "eventtype" endnode.attrs) = "plain" then
+			let gr4 = (print_endline "check gr3"; areEdgesOK gr3; RLMap.fold (fun evtype endnodeid gr' ->
+				grreprRemoveNode (cutSequenceOverNode gr' endnodeid) endnodeid
+			) endnodesByType gr3)
+(*			if (RLMap.find "eventtype" endnode.attrs) = "plain" then
 				grreprRemoveNode (cutSequenceOverNode gr3 endnode.id) endnode.id
 			else
 				let (en',enog',enic') = IdtMap.find endnode.id gr3.nodes
 				in
 				{gr3 with nodes = IdtMap.add endnode.id ({en' with attrs = RLMap.add "eventtype" "throw" en'.attrs}, enog',enic') grrepr.nodes}
-			in
-			let (prn, prog, prin) = IdtMap.find nid gr4.nodes
+*)			in
+			let (prn, prog, prin) = (print_endline "check gr4"; areEdgesOK gr4; IdtMap.find nid gr4.nodes)
 			in
 			let parentprocid = List.hd (
 				IdtSet.fold (fun incedgeid ll ->
@@ -847,6 +947,7 @@ let translateTaskScript scriptstr isGuard =
 		end
 		| Genlex.Int x -> DEIntConst x
 		| Genlex.Float x -> DEFloatConst x
+		| Genlex.String x -> DEStringConst x
 	in
 	while not (isemptystream tkstream) do
 		let fstTok = Stream.peek tkstream
@@ -2845,6 +2946,18 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 ;;
 
 let printgrgr grrepr fn =
+	let myEscape s =
+		let rec findAndHash i =
+			if i >= (String.length s) then raise Not_found else
+			let j = String.index_from s i '&'
+			in
+			if (j+1) >= (String.length s) then raise Not_found else
+			if s.[j+1] = '#' then j else findAndHash (j+1)
+		in
+		String.escaped (try
+			String.sub s 0 (findAndHash 0)
+		with Not_found -> s)
+	in
 	let oc = open_out fn
 	in
 	let output_node (node : nodeonpicturetype) =
@@ -2880,7 +2993,7 @@ let printgrgr grrepr fn =
 			| _ -> (try RLMap.find "name" node.attrs with Not_found -> "NO NAME")
 			)
 		in
-		output_string oc (String.concat "\\n" (nameattr :: collAttrs));
+		output_string oc (String.concat "\\n" (List.map myEscape (nameattr :: collAttrs)));
 		output_string oc "\"];\n"
 	and output_edge edge =
 		output_string oc ("v" ^ (NewName.to_string edge.src) ^ " -> v" ^ (NewName.to_string edge.tgt) ^ " [style=");
@@ -2904,10 +3017,10 @@ let printgrgr grrepr fn =
 				| EOPContain -> "green"
 				| EOPBoundary -> "blue"
 				| EOPComment -> "black" );
-		let collAttrs = RLMap.fold (fun attrname attrvalue ll ->
+		let collAttrs = ("ID = " ^ NewName.to_string edge.id) :: (RLMap.fold (fun attrname attrvalue ll ->
 			if (attrname = "default") || (attrname = "branch") then ll else
 			(attrname ^ " = " ^ attrvalue) :: ll
-		) edge.attrs []
+		) edge.attrs [])
 		in
 		if collAttrs = [] then
 		begin
@@ -2916,7 +3029,7 @@ let printgrgr grrepr fn =
 		else
 		begin
 			output_string oc " label=\"";
-			output_string oc (String.concat "\\n" collAttrs);
+			output_string oc (String.concat "\\n" (List.map myEscape collAttrs));
 			output_string oc "\"];\n"
 		end
 	in
@@ -2933,6 +3046,8 @@ let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = f
 	let z nm f garg =
 		let res = f garg
 		in
+		print_endline ("Performed step no. " ^ nm);
+		areEdgesOK res;
 		printgrgr res ("P_" ^ nm ^ ".dot");
 		res
 	in

@@ -2193,6 +2193,10 @@ let moveOneLongMergeNode dg oldeid =
 	) newmerge IdtSet.empty
 	in
 	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
+	let oc = open_out ("addLMerge_" ^ (NewName.to_string xtgt.id) ^ ".dot")
+	in
+	GrbPrint.printgraph oc dg2;
+	close_out oc;
 	Left (dg2, newdataedges, newedgeid)
 	end
 ;;
@@ -2253,7 +2257,7 @@ let moveMergeDown dg =
 		begin
 			match !lastRetry with
 			| Some eid' when eid = eid' -> (breakLoop := true)
-			| Some eid' -> (putInQueue eid'; print_string "put it back to queue\n")
+			| Some eid' -> (putInQueue eid; print_string "put it back to queue\n")
 			| None -> (lastRetry := Some eid; putInQueue eid; print_string ("put it back to queue, start loop detection; there are now " ^ (string_of_int (Queue.length edgeQ)) ^ " edges in the queue\n"))
 		end
 		| Left (newdg, edgesForQ, newdataedge) ->
@@ -2346,7 +2350,15 @@ let moveOneFilterNode dg oldeid =
 			(DG.addedge ((IxM [| Some (srcid, 0, src2tgtmap) |], oldeid), ntgt.id, PortSingle vtype)
 			(DG.addnode combNode dg))))
 		in
-		Some (Right dg1)
+		let srcn = DG.findnode srcid dg1
+		in
+		let putEidBack = match srcn.nkind.nodeintlbl with NNFilter _ -> true | _ -> false
+		in
+		let oc = open_out ("joinFilter_" ^ (NewName.to_string combNode.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg1;
+		close_out oc;
+		Some (Right (dg1, putEidBack))
 	end
 	else 
 	begin
@@ -2428,6 +2440,10 @@ let moveOneFilterNode dg oldeid =
 	) newfilter IdtSet.empty
 	in
 	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
+	let oc = open_out ("addFilter_" ^ (NewName.to_string xtgt.id) ^ ".dot")
+	in
+	GrbPrint.printgraph oc dg2;
+	close_out oc;
 	Some (Left (dg2, newdataedges, newedgeid))
 	end
 ;;
@@ -2482,9 +2498,10 @@ let moveFilterDown dg =
 		print_string ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue\n");
 		match moveOneFilterNode !currdg eid with
 		| None -> ()
-		| Some (Right dgnew) ->
+		| Some (Right (dgnew, putEidBack)) ->
 		begin
-			currdg := dgnew
+			currdg := dgnew;
+			(if putEidBack then (putInQueue eid; print_string ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue\n")))
 		end
 		| Some (Left (newdg, edgesForQ, newdataedge)) ->
 		begin
