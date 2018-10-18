@@ -59,7 +59,7 @@ let leaksAsGraphs dg resultdir isSQL =
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
-			(if (*isSQL *) true then ignore (graphToTree dg'' n resultdir) )
+			(if isSQL then ignore (graphToTree dg'' n resultdir) )
 (*			let sccarr = GrbOptimize.SCCFinder.scc_array dg''
 			in
 			print_string "Found strongly connected components\n";
