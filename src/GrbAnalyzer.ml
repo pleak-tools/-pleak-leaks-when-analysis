@@ -488,7 +488,7 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl6a;
 	close_out oc; 
-	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl6a)))))))
+	let dgstraightened = GrbOptimize.singleOutputPerValue (GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl6a))))))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
@@ -497,7 +497,16 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-	let dgSingleOutputs = (* GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 ( *)  GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.singleOutputPerValue dgstraightened))))) (* )) *)
+	let dgAfterZ3 = GrbImplication.removeRedundantEdgesWithZ3 dgstraightened
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgAfterZ3 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "afterZ3.dot"
+	in
+	GrbPrint.printgraph oc dgAfterZ3;
+	close_out oc;
+	let dgSingleOutputs = (* GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 ( *)  GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead dgAfterZ3))) (* )) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
 	in

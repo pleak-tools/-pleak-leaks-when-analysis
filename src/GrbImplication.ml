@@ -707,7 +707,7 @@ let writeOrderingToZ3 dg oc =
 		begin
 			let (AITT nb) = n.outputindextype
 			in
-			let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "Int") nb.(0)))
+			let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "S") nb.(0)))
 			in
 			output_string oc ("(declare-fun n" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") Int)\n")
 		end
@@ -725,7 +725,7 @@ let writeOrderingToZ3 dg oc =
 			and (AITT nb) = n.outputindextype
 			and (IxM ncc) = n.ixtypemap
 			in
-			let qvarsNA = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " Int)") na.(0)))
+			let qvarsNA = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " S)") na.(0)))
 			and needsForAll = (Array.length na.(0)) > 0
 			in
 			let Some (_, _, fwdmap) = ncc.(0)
@@ -803,7 +803,7 @@ let writeBooleanDescToZ3 dg oc =
 		begin
 			let (AITT nb) = n.outputindextype
 			in
-			let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "Int") nb.(0)))
+			let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "S") nb.(0)))
 			in
 			output_string oc ("(declare-fun n" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") Bool)\n")
 		end
@@ -823,7 +823,7 @@ let writeBooleanDescToZ3 dg oc =
 			and (AITT nb) = n.outputindextype
 			and (IxM ncc) = n.ixtypemap
 			in
-			let qvarsNA = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " Int)") na.(0)))
+			let qvarsNA = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " S)") na.(0)))
 			and needsForAll = (Array.length na.(0)) > 0
 			in
 			let Some (_, _, fwdmap) = ncc.(0)
@@ -958,7 +958,7 @@ let askZ3ForRedundantEdges dg oc =
 				output_string oc "(push)\n";
 				output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n.id) ^ "...\")\n" );
 				Array.iteri (fun idx _ ->
-					output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () Int)\n")
+					output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
 				) na.(0);
 				DG.nodefoldedges (fun ((IxM cc', othereid), _, _) () ->
 					if othereid <> testeid then
@@ -1001,7 +1001,7 @@ let askZ3ForRedundantMaxEdges dg0 oc =
 			output_string oc "(push)\n";
 			output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n0.id) ^ "...\")\n" );
 			Array.iteri (fun idx _ ->
-				output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () Int)\n")
+				output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
 			) na.(0);
 			DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
 				if eid = eid' then () else
@@ -1047,7 +1047,7 @@ let removeRedundantMaxEdges dg0 =
 				in
 				output_string oc "(push)\n";
 				Array.iteri (fun idx _ ->
-					output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () Int)\n")
+					output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
 				) na.(0);
 				DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
 					if eid = eid' then () else
@@ -1124,7 +1124,7 @@ let removeRedundantEdgesWithZ3 dg0 =
 						in
 						output_string oc "(push)\n";
 						Array.iteri (fun idx _ ->
-							output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () Int)\n")
+							output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
 						) na.(0);
 						DG.nodefoldedges (fun ((IxM cc', othereid), _, _) () ->
 							if othereid <> testeid then
@@ -1143,16 +1143,17 @@ let removeRedundantEdgesWithZ3 dg0 =
 						flush oc;
 						let answer = input_line ic
 						in
-						if answer = "unknown" then
+						(if answer = "unknown" then
 						begin
 							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
-						end;
-						if answer = "unsat" then
+						end);
+						(if answer = "unsat" then
 						begin
 							changes := true;
 							runagain := true;
-							currdg := DG.remedge testeid !currdg
-						end;
+							currdg := DG.remedge testeid !currdg;
+							print_string ("Getting rid of edge no. " ^ (NewName.to_string testeid) ^ "\n");
+						end);
 						output_string oc "(pop)\n";
 					end
 				) n ()
@@ -1166,8 +1167,20 @@ let removeRedundantEdgesWithZ3 dg0 =
 ;;
 
 let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks =
+	print_string "Q: ";
+	let print_idtset ids = print_string (String.concat ", " (List.map NewName.to_string (IdtSet.elements ids)))
+	in
+	print_string "src: ";
+	print_idtset srcids;
+	print_string " tgt: ";
+	print_idtset tgtids;
+	print_string " flows: ";
+	print_idtset flowThroughs;
+	print_string " chks: ";
+	print_idtset checks;
+	print_newline ();
 	let mkForall oitype pref nid =
-		if (Array.length oitype) = 0 then ((fun () -> ()), (fun () -> ()), fun () -> output_string oc "pref"; output_string oc (NewName.to_string nid))
+		if (Array.length oitype) = 0 then ((fun () -> ()), (fun () -> ()), fun () -> output_string oc pref; output_string oc (NewName.to_string nid))
 		else
 		let nbinps = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " S)") oitype))
 		and nbvars = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "x" ^ (string_of_int idx)) oitype))
