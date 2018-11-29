@@ -1998,7 +1998,7 @@ let dimFunDepsToDimEqs dg =
 	in
 	(* initialize deps *)
 	DG.foldnodes (fun n () ->
-		if (match n.nkind.nodeintlbl with NNIsEq | NNOperarion OPIsEq -> false | _ -> true) then () else
+		if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then () else
 		let possTakeDimDim = ref None
 		and possAddrFunDimAndName = ref None
 		in
