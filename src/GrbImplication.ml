@@ -974,6 +974,7 @@ let askZ3ForRedundantEdges dg oc =
 				output_string oc (idAndArgsToStr previd backmap);
 				output_string oc "))\n";
 				output_string oc "(check-sat)\n";
+				flush oc;
 				output_string oc "(pop)\n"
 			) n ()
 		end
@@ -1015,6 +1016,7 @@ let askZ3ForRedundantMaxEdges dg0 oc =
 				output_string oc "))\n"
 			) n0 ();
 			output_string oc "(check-sat)\n";
+			flush oc;
 			output_string oc "(pop)\n"
 			) n0 ()
 		) !currdg ()
@@ -1092,7 +1094,8 @@ let removeRedundantMaxEdges dg0 =
 	!currdg
 ;;
 
-let removeRedundantEdgesWithZ3 dg0 =
+let removeRedundantEdgesWithZ3_alternate dg0 =
+	print_endline "Enter removeRedundantEdges";
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	let currdg = ref dg0
@@ -1101,14 +1104,17 @@ let removeRedundantEdgesWithZ3 dg0 =
 	in
 	output_string oc "(set-option :timeout 2000)\n";
 	while !runagain do
+		print_endline "Start iteration";
 		runagain := false;
 		output_string oc "(reset)\n";
 		writeBooleanDescToZ3 !currdg oc;
+		print_string "Sent description to Z3\n";
 		let dgForIter = !currdg
 		in
 		DG.foldnodes (fun n0 () ->
 			if n0.nkind.nodeintlbl = NNAnd then
 			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
 				let changes = ref false
 				and n = DG.findnode n0.id !currdg
 				in
@@ -1120,6 +1126,7 @@ let removeRedundantEdgesWithZ3 dg0 =
 				DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
 					if not !changes then
 					begin
+						print_endline ("No changes yet. Working with edge no. " ^ (NewName.to_string testeid));
 						let Some (previd, _, backmap) = cc.(0)
 						in
 						output_string oc "(push)\n";
@@ -1139,20 +1146,23 @@ let removeRedundantEdgesWithZ3 dg0 =
 						output_string oc "(assert (not ";
 						output_string oc (idAndArgsToStr previd backmap);
 						output_string oc "))\n";
+						print_endline "Calling check-sat";
 						output_string oc "(check-sat)\n";
 						flush oc;
 						let answer = input_line ic
 						in
+						print_endline "Received answer";
 						(if answer = "unknown" then
 						begin
 							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
 						end);
 						(if answer = "unsat" then
 						begin
+							print_endline "The answer was UNSAT\n";
 							changes := true;
 							runagain := true;
 							currdg := DG.remedge testeid !currdg;
-							print_string ("Getting rid of edge no. " ^ (NewName.to_string testeid) ^ "\n");
+							print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
 						end);
 						output_string oc "(pop)\n";
 					end
@@ -1163,6 +1173,104 @@ let removeRedundantEdgesWithZ3 dg0 =
 	output_string oc "(exit)\n";
 	flush oc;
 	ignore (Unix.close_process (ic,oc));
+	!currdg
+;;
+
+let rrewz_entry_count = ref 0;;
+
+let removeRedundantEdgesWithZ3 dg0 =
+	print_endline "Enter removeRedundantEdges";
+	let idAndArgsToStr = idAndArgsToStrWithPref "d"
+	and writeBothChans oc1 oc2 s = (output_string oc1 s; output_string oc2 s)
+	in
+	let x = !rrewz_entry_count
+	in
+	rrewz_entry_count := x + 1;
+	let tc = open_out ("removeRedundantEdges_" ^ (string_of_int x))
+	in
+	let currdg = ref dg0
+	and runagain = ref true
+	in
+	while !runagain do
+		print_endline "Start iteration";
+		runagain := false;
+		let dgForIter = !currdg
+		in
+		DG.foldnodes (fun n0 () ->
+			if (n0.nkind.nodeintlbl = NNAnd) || (n0.nkind.nodeintlbl = NNOr) then
+			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
+				let changes = ref false
+				and isAnd = (n0.nkind.nodeintlbl = NNAnd)
+				and n = DG.findnode n0.id !currdg
+				in
+				let (AITT na) = n.inputindextype
+				and (IxM ncc) = n.ixtypemap
+				in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
+					(* if not !changes then *)
+					begin
+						print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
+						output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
+						let (ic,oc) = Unix.open_process "z3 -in"
+						in
+						writeBothChans oc tc "(set-option :timeout 20)\n";
+						writeBothChans oc tc "(declare-sort S)\n";
+						writeBooleanDescToZ3 !currdg oc;
+						writeBooleanDescToZ3 !currdg tc;
+						print_string "Sent description to Z3\n";
+						let Some (previd, _, backmap) = cc.(0)
+						in
+						Array.iteri (fun idx _ ->
+							writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+						) na.(0);
+						DG.nodefoldedges (fun ((IxM cc', othereid), _, _) () ->
+							if othereid <> testeid then
+							begin
+								let Some (previd', _, backmap') = cc'.(0)
+								in
+								writeBothChans oc tc "(assert ";
+								(if not isAnd then writeBothChans oc tc "(not ");
+								writeBothChans oc tc (idAndArgsToStr previd' backmap');
+								(if not isAnd then writeBothChans tc oc ")");
+								writeBothChans tc oc ")\n"
+							end
+						) n ();
+						writeBothChans tc oc "(assert ";
+						(if isAnd then writeBothChans tc oc "(not ");
+						writeBothChans tc oc (idAndArgsToStr previd backmap);
+						(if isAnd then writeBothChans tc oc ")");
+						writeBothChans tc oc ")\n";
+						print_endline "Calling check-sat";
+						writeBothChans tc oc "(check-sat)\n";
+						flush oc;
+						let answer = input_line ic
+						in
+						print_endline "Received answer";
+						(if answer = "unknown" then
+						begin
+							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
+						end);
+						(if answer = "unsat" then
+						begin
+							print_endline "The answer was UNSAT\n";
+							changes := true;
+							runagain := true;
+							currdg := DG.remedge testeid !currdg;
+							print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
+						end);
+						writeBothChans oc tc "(exit)\n";
+						output_string tc ("Answer is " ^ answer ^ "\n");
+						flush oc;
+						ignore (Unix.close_process (ic,oc));
+					end
+				) n ()
+			end
+		) dgForIter ()
+	done;
+	close_out tc;
 	!currdg
 ;;
 

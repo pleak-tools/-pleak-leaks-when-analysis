@@ -422,7 +422,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB) (DG.addnode longornode dg5)
 	in
-	let (dg7, withnullsloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortSingleB)
+	let (dg7, withnullsloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortUSingleB)
 	in
 	let (dg8, finalfilterloc) = addNodesToGraph dg7 ixtypeleft [filterlocleft; withnullsloc] nkAnd (fun _ -> PortStrictB)
 	in
@@ -565,7 +565,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB) (DG.addnode longornode dg5)
 	in
-	let (dg6a, flippedloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortSingleB)
+	let (dg6a, flippedloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortUSingleB)
 	in
 	let (dg7, finalfilterloc) = addNodesToGraph dg6a ixtypeleft [filterlocleft; flippedloc] nkAnd (fun _ -> PortStrictB)
 	in

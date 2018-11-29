@@ -304,14 +304,41 @@ let xmlchilds frag s =
 ;;
 
 let getPCData xmlelem = (* Xml.pcdata (List.hd (Xml.children xmlelem)) *)
-	match xmlelem with
-	| Xml.Element (_, _, children) -> (
-		match children with
-		| [] -> ""
-		| xx :: _ -> Xml.pcdata xx
-	)
-	| Xml.PCData s -> s
+	let prelres =
+		match xmlelem with
+		| Xml.Element (_, _, children) -> (
+			match children with
+			| [] -> ""
+			| xx :: _ -> Xml.pcdata xx
+		)
+		| Xml.PCData s -> s
+	in
+	let buf = Buffer.create ((String.length prelres) - 5)
+	and rembuf = Buffer.create 5
+	in
+	for i = 0 to (String.length prelres) - 1 do
+		let x = Buffer.length rembuf
+		and c = prelres.[i]
+		in
+		if  ((x = 0) && (c = '&')) ||
+			((x = 1) && (c = '#')) ||
+			((x = 2) && (c = '1')) ||
+			((x = 3) && (c = '0')) ||
+			((x = 4) && (c = ';')) then
+		begin
+			if x = 4 then Buffer.clear rembuf else Buffer.add_char rembuf c;
+		end
+		else
+		begin
+			Buffer.add_buffer buf rembuf;
+			Buffer.add_char buf c;
+			Buffer.clear rembuf
+		end
+	done;
+	Buffer.add_buffer buf rembuf;
+	Buffer.contents buf
 ;;
+(* to remove: &#10; *)
 
 let collectFromFile grrepr =
 	let idmappings = ref RLMap.empty
@@ -481,7 +508,11 @@ let collectFromFile grrepr =
 				let nodeonpic1 = try
 					let xmlsql = xmlchild xmlprocesselem "pleak:sqlScript"
 					in
-					{nodeonpic0 with attrs = RLMap.add "sql" (getPCData xmlsql) nodeonpic0.attrs}
+					let actualsql = getPCData xmlsql
+					in
+					if actualsql <> "" then
+						{nodeonpic0 with attrs = RLMap.add "sql" actualsql nodeonpic0.attrs}
+					else nodeonpic0
 				with Xml.No_attribute _ -> nodeonpic0
 				in
 				addResNode nodeonpic1;
@@ -2285,7 +2316,7 @@ let foldGraphNodesByControlFlow (f : NewName.idtype -> nodeonpicturetype * IdtSe
 	!curracc
 ;;
 
-let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName.idtype option list list IdtMap.t) * (graphgraphtype -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t) )) =
+let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName.idtype option list list IdtMap.t) * (graphgraphtype -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t) )) =
 	let rec pathToContainingProc grrepr nodeid =
 		let (node, noutg, nincom) = IdtMap.find nodeid grrepr.nodes
 		in
@@ -2370,7 +2401,7 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 		in
 		let rightMerger k x y = leftMerger k y x
 		in
-		let (foldingFunction : NewName.idtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> ((NewName.idtype option list list IdtMap.t) * ((NewName.idtype * bool) option)) IdtMap.t list -> (NewName.idtype option list list IdtMap.t) * ((NewName.idtype * bool) option) ) = fun nodeid (node, noutg, nincom) availProcPtrList ->
+		let (foldingFunction : NewName.idtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> ((NewName.idtype option list list IdtMap.t) * ((IdtSet.t * bool) option)) IdtMap.t list -> (NewName.idtype option list list IdtMap.t) * ((IdtSet.t * bool) option) ) = fun nodeid (node, noutg, nincom) availProcPtrList ->
 			let flowInsCalculator procs = IdtMap.fold (fun _ availAtInc allAvail ->
 				IdtMap.merge leftMerger availAtInc allAvail
 			) procs IdtMap.empty
@@ -2382,7 +2413,7 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 				in
 				let newpptr = NewName.get ()
 				in
-				((IdtMap.add newpptr ppl flowIns), Some (newpptr, true))
+				((IdtMap.add newpptr ppl flowIns), Some (IdtSet.singleton newpptr, true))
 			else if (node.kind = NOPEvent) && ((RLMap.find "eventkind" node.attrs) = "catch") && ((RLMap.find "eventtype" node.attrs) = "message") then
 			begin
 				let procPtrsOnHier = List.map (fun x -> flowInsCalculator (IdtMap.map fst x)) availProcPtrList
@@ -2414,7 +2445,8 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 					) sendnodepaths
 				) availPtrs
 				in
-				let (goodProcPtr,_) = IdtMap.choose goodPtrs
+				let goodProcPtr = IdtMap.fold (fun ptr _ s -> IdtSet.add ptr s) goodPtrs IdtSet.empty
+				(* let (goodProcPtr,_) = IdtMap.choose goodPtrs *)
 				in
 				(flowIns, Some (goodProcPtr, false))
 			end
@@ -2496,7 +2528,7 @@ module GT_SprNetworkNode = struct type t = sprNetworkNode end;;
 module EASP = ExtArray(GT_StoppingProc);;
 module EASNN = ExtArray(GT_SprNetworkNode);;
 
-let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (stoppingproc * NewName.idtype * NewName.idtype, anyproc) either) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
+let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (stoppingproc * NewName.idtype * NewName.idtype, anyproc) either) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
 	let isOpeningGateway (node, noutg, nincom) =
 		let c = IdtSet.fold (fun edgeid cnt ->
 			let edge = IdtMap.find edgeid grrepr.edges
@@ -2555,7 +2587,7 @@ let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t
 		in
 		let encprocname = RLMap.find "name" encproc.attrs
 		in
-		let starttask = SPRTask (StartEvent ((try Some (IdtMap.find startNodeId procpointers) with Not_found -> None), encprocname))
+		let starttask = SPRTask (StartEvent ((try Some (IdtSet.choose (IdtMap.find startNodeId procpointers)) with Not_found -> None), encprocname))
 		in
 		let startAndRecv = if (RLMap.find "eventtype" startnode.attrs) = "message" then
 			SPRSeq (starttask, (collectReceivings grrepr (startnode, startnOutg, startnIncom) procpointers dsdecls updDatasets))
@@ -2576,12 +2608,12 @@ let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t
 		| Right None -> Right (PRNetwork (nwprocs, nwnodes, []))
 		| Left xs -> Right (PRNetwork (nwprocs, nwnodes, xs))
 		| Right (Some (nid, eid)) -> Left (SPRNetwork (nwprocs, nwnodes), nid, eid)
-and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> NewName.idtype IdtMap.t -> datasetdeclaration RLMap.t -> IdtSet.t -> stoppingproc) = fun grrepr (startNode, startnOutg, startnIncom) procpointers dsdecls updDatasets ->
+and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> IdtSet.t IdtMap.t -> datasetdeclaration RLMap.t -> IdtSet.t -> stoppingproc) = fun grrepr (startNode, startnOutg, startnIncom) procpointers dsdecls updDatasets ->
 	let receivings = IdtSet.fold (fun incedgeid ll ->
 		let incedge = IdtMap.find incedgeid grrepr.edges
 		in
 		if incedge.kind <> EOPMsgFlow then ll else
-		let sendPrPtr = if isProcessStartNode grrepr startNode.id then IdtMap.find incedge.src procpointers else NewName.invalid_id
+		let sendPrPtr = if isProcessStartNode grrepr startNode.id then IdtSet.choose (IdtMap.find incedge.src procpointers) else NewName.invalid_id
 		in
 		let (sendNode, _, sendNIncom) = IdtMap.find incedge.src grrepr.nodes
 		in
@@ -2600,6 +2632,12 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		(incedge, sendPrPtr, dataNode) :: ll
 	) startnIncom []
 	in
+	print_string "Collecting receivings for node no. ";
+	print_endline (NewName.to_string startNode.id);
+	List.iter (fun (incedge, sendprptr, (datanode : nodeonpicturetype)) ->
+		print_string ("Over edge " ^ (NewName.to_string incedge.id) ^ " comes datanode no. " ^ (NewName.to_string datanode.id) ^ " from process no. " ^ (NewName.to_string sendprptr) ^ "\n")
+	) receivings;
+	
 	let Some storePlace = IdtSet.fold (fun dataEdgeId res ->
 		match res with
 			| Some _ -> res
@@ -2623,8 +2661,13 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		in
 		IdtMap.find procStartEventId procpointers
 *)	in
+	let rec createsrccheck srcprptr = function
+		| [] -> DEOp (OPBoolConst false, [])
+		| [myOwnProcPtr] -> DEPtrSrcCheck (myOwnProcPtr, Right srcprptr)
+		| myOwnProcPtr :: ll -> DEOp (OPOr, [DEPtrSrcCheck (myOwnProcPtr, Right srcprptr); createsrccheck srcprptr ll])
+	in
 	let checksAndCopies = List.map (fun (msgflowedge, srcprptr, (srcdatanode : nodeonpicturetype)) ->
-		let gtask = GuardTask ("check the source of the message", (if srcprptr = NewName.invalid_id then DEOp (OPBoolConst true, []) else DEPtrSrcCheck (myOwnProcPtr, Right srcprptr)), [])
+		let gtask = GuardTask ("check the source of the message", (if srcprptr = NewName.invalid_id then DEOp (OPBoolConst true, []) else createsrccheck srcprptr (IdtSet.elements myOwnProcPtr)), [])
 		in
 		let srcdsname = RLMap.find "name" srcdatanode.attrs
 		in
@@ -2632,7 +2675,7 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 			((storePlaceName, compname), DEVar (srcdsname, compname)) :: ll
 		) (snd (RLMap.find srcdsname dsdecls)) []
 		in
-		let taskDefCont = (copyScript, [(Some myOwnProcPtr, srcdsname)], [storePlaceName])
+		let taskDefCont = (copyScript, [(myOwnProcPtr, srcdsname)], [storePlaceName])
 		in
 		let copytaskname = "Copy the dataset " ^ srcdsname
 		in
@@ -2647,11 +2690,11 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		| (gtask, wholeCopyTask) :: ll -> SPRBranch (gtask ,SPRTask wholeCopyTask, (turnToCopy ll))
 	in
 	turnToCopy checksAndCopies
-and (iterMakeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> anyproc) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
+and (iterMakeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> anyproc) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
 	match makeProcStartingFromNode grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId with
 		| Left (stproc, nextnodeid, _) -> PRSeq (stproc, iterMakeProcStartingFromNode grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets nextnodeid)
 		| Right aproc -> aproc
-and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (* stoppingproc array * sprNetworkNode array -> (int, int) either IdtMap.t -> *) stoppingproc array * sprNetworkNode array * ((int * anyproc) list, (NewName.idtype * NewName.idtype) option) either ) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId (* (existingNWNodes, existingNWPoints) nodesToNWMap *) ->
+and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (* stoppingproc array * sprNetworkNode array -> (int, int) either IdtMap.t -> *) stoppingproc array * sprNetworkNode array * ((int * anyproc) list, (NewName.idtype * NewName.idtype) option) either ) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId (* (existingNWNodes, existingNWPoints) nodesToNWMap *) ->
 	let rec collectLhsOfCompDefs = function
 		| [] -> RLSet.empty
 		| ((dsname,_),_) :: cdefs -> RLSet.add dsname (collectLhsOfCompDefs cdefs)
@@ -2752,7 +2795,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					in
 					let gdef = IdtMap.find workNodeId guards
 					in
-					let srcdss = RLSet.fold (fun dsname ll -> (None, dsname) :: ll) (collectRhsOfCompDef gdef) []
+					let srcdss = RLSet.fold (fun dsname ll -> (IdtSet.empty, dsname) :: ll) (collectRhsOfCompDef gdef) []
 					in
 					let guardToGatewayEdgeId = grreprOutgoingEdgeOfKind grrepr workNodeId EOPSeqFlow
 					in
@@ -2773,7 +2816,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					and rhsdss = collectRhsOfManyCompDef compdefs
 					in
 					let noderhscomp = RLSet.fold (fun dsname ll ->
-						(None, dsname) :: ll
+						(IdtSet.empty, dsname) :: ll
 					) rhsdss []
 					and (nodelhscomp, pubcomp) = RLSet.fold (fun dsname (ll, pp) ->
 						let ll' = dsname :: ll
@@ -2802,7 +2845,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					(cEvent.kind = NOPEvent) && ((RLMap.find "eventkind" cEvent.attrs) = "start")
 				) wnoutg then
 				begin
-					let prptr = IdtMap.find workNodeId procpointers
+					let prptr = IdtSet.choose (IdtMap.find workNodeId procpointers)
 					and myTaskName = RLMap.find "name" workNode.attrs
 					and procAddr = List.map (function | None -> None | Some prnodeid -> 
 						let (prnode, _, _) = IdtMap.find prnodeid grrepr.nodes

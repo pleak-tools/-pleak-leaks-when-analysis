@@ -532,6 +532,7 @@ type portname =
 | PortSingle of valuetype
 | PortMulti of valuetype
 | PortSingleB
+| PortUSingleB
 | PortOperInput of int
 | PortCompare
 | PortStrictB
@@ -546,6 +547,7 @@ let string_of_portname = function
 | PortSingle vt -> "PortSingle(" ^ (string_of_valuetype vt) ^ ")"
 | PortMulti vt -> "PortMulti(" ^ (string_of_valuetype vt) ^ ")"
 | PortSingleB -> "PortSingleB"
+| PortUSingleB -> "PortUSingleB"
 | PortStrictB -> "PortStrictB"
 | PortUnstrB -> "PortUnstrB"
 | PortCompare -> "PortCompare"
@@ -586,8 +588,9 @@ let portdesc pn =
 | PortFalse vt	-> { defdesc with inputkind = vt; wirename = "F"; inputopts = PortOptSet.empty }
 | PortTrue vt	-> { defdesc with inputkind = vt; wirename = "T"; inputopts = PortOptSet.empty }
 | PortSingle vt	-> { defdesc with inputkind = vt }
-| PortMulti vt	-> { defdesc with inputkind = vt; inputnum = PortUnbounded }
+| PortMulti vt	-> { defdesc with inputkind = vt; inputnum = PortUnbounded; inputopts = PortOptSet.empty }
 | PortSingleB	-> { defdesc with inputkind = VBoolean; wirecolor = cdepcol; printbold = false; wirename = "C" }
+| PortUSingleB	-> { defdesc with inputkind = VBoolean; wirecolor = cdepcol; printbold = false; wirename = "C"; inputopts = PortOptSet.empty }
 | PortStrictB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; wirecolor = cdepcol; printbold = false }
 | PortUnstrB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; inputopts = PortOptSet.empty; wirecolor = cdepcol; printbold = false }
 | PortCompare	-> { defdesc with inputkind = VAny; inputnum = PortUnbounded } (* was "PortBounded 2"*)
@@ -731,7 +734,7 @@ let nkOperation i vt opname = {
   ports = PortSet.from_list (List.map (fun k -> PortOperInput k) (intfromto 1 i));
   outputtype = vt;
   nodeintlbl = NNOperation opname;
-  nodelabel = (fun _ -> string_of_opname opname);
+  nodelabel = (fun _ -> "OP:" ^ (string_of_opname opname));
   nodecolor = (192,128,0);
   nodetextcolor = (0,0,0);
   boldborder = true;
@@ -972,7 +975,7 @@ let nkOr = {
 
 let nkNot = {
   nkOr with
-  ports = PortSet.singleton PortSingleB;
+  ports = PortSet.singleton PortUSingleB;
   nodeintlbl = NNNot;
   nodelabel = (fun _ -> "not");
   nodecolor = (0,200,0);
