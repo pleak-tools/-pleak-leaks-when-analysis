@@ -508,7 +508,7 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgsimpl5 = (* GrbOptimize.moveLongorsDown (GrbOptimize.removeDead (GrbOptimize.moveNotsUp (GrbOptimize.removeDead ( *) GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveJustMergeDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))) (* )))) *)
+	let dgsimpl5 = (* GrbOptimize.moveLongorsDown (GrbOptimize.removeDead ( *) GrbOptimize.moveNotsUp (GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveJustMergeDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))))) (* )) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in

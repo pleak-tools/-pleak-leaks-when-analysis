@@ -718,19 +718,28 @@ let (collectRemoteDataset : IdtSet.t -> datasetname -> graphpreparationtype -> D
 		in
 		let resExec = mkMergeAndIdNodes (cleanList llexecs) false VBoolean
 		and resTime = mkMergeAndIdNodes (cleanList lltimes) true VInteger
-		and resComps =
-			let clcomps = cleanList llcomps
-			and (_, comptypes) = RLMap.find dsname prep.datasetdecls
-			in
-			RLMap.fold (fun compname oneloc m ->
-				RLMap.add compname (mkMergeAndIdNodes (List.map (RLMap.find compname) clcomps) true (RLMap.find compname comptypes)) m
-			) dscomplocs RLMap.empty
 		in
 		let (dgf1, resExec') = addNodesToGraph !currdg prep.currixt [resExec; execnode] nkAnd (fun _ -> PortStrictB)
 		in
 		let (dgf2, resTime') = addNodesToGraph dgf1 prep.currixt [resTime; timenode] (nkMaximum VInteger) (fun _ -> PortMulti VInteger)
 		in
-		(dgf2, (resExec', resTime', resComps, prep.currixt))
+		currdg := dgf2;
+		let resComps =
+			let clcomps = cleanList llcomps
+			and (_, comptypes) = RLMap.find dsname prep.datasetdecls
+			in
+			RLMap.fold (fun compname oneloc m ->
+				let mergetype = RLMap.find compname comptypes
+				in
+				let mergeloc = mkMergeAndIdNodes (List.map (RLMap.find compname) clcomps) true mergetype
+				in
+				let (nextdg, filterloc) = GrbInput.addNodesToGraph !currdg prep.currixt [resExec'; mergeloc] (nkFilter mergetype) (fun i -> if i = 0 then PortSingleB else PortSingle mergetype)
+				in
+				currdg := nextdg;
+				RLMap.add compname filterloc m
+			) dscomplocs RLMap.empty
+		in
+		(!currdg, (resExec', resTime', resComps, prep.currixt))
 	end
 ;;
 
