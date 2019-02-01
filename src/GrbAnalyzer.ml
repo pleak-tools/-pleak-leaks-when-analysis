@@ -4,12 +4,43 @@ let graphToTree dg n resultdir =
 	let changedg = ref DG.empty
 	in
 	let rec mkDeepCopy n =
-		let newn = {n with
-			id = NewName.get ();
-			inputs = PortMap.empty
-		}
+		let (upid, downid, portmapfun) = if n.nkind.nodeintlbl = NNLongAnd true then
+		begin
+			let newn = {n with
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				nkind = nkLongOr
+			}
+			and prenot = {
+				nkind = nkNot;
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = n.inputindextype;
+				outputindextype = n.inputindextype;
+				ixtypemap = identityIndexMap () n.inputindextype
+			}
+			and postnot = {
+				nkind = nkNot;
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = n.outputindextype;
+				outputindextype = n.outputindextype;
+				ixtypemap = identityIndexMap () n.outputindextype
+			}
+			in
+			changedg := DG.addedge ((identityIndexMap prenot.id n.inputindextype, NewName.get ()), newn.id, PortSingleB true) (DG.addedge ((identityIndexMap newn.id n.outputindextype, NewName.get ()), postnot.id, PortUSingleB) (DG.addnode newn (DG.addnode prenot (DG.addnode postnot !changedg))));
+			(prenot.id, postnot.id, fun _ -> PortUSingleB)
+		end else
+		begin
+			let newn = {n with
+				id = NewName.get ();
+				inputs = PortMap.empty
+			}
+			in
+			changedg := DG.addnode newn !changedg;
+			(newn.id, newn.id, fun x -> x)
+		end
 		in
-		changedg := DG.addnode newn !changedg;
 		DG.nodefoldedges (fun ((IxM cc, eid), _, prt) () ->
 			let Some (srcid, _, backmap) = cc.(0)
 			in
@@ -17,9 +48,9 @@ let graphToTree dg n resultdir =
 			in
 			let newsrcid = mkDeepCopy src
 			in
-			changedg := DG.addedge ((IxM [| Some (newsrcid, 0, backmap) |], NewName.get ()), newn.id, prt) !changedg
+			changedg := DG.addedge ((IxM [| Some (newsrcid, 0, backmap) |], NewName.get ()), upid, portmapfun prt) !changedg
 		) n ();
-		newn.id
+		downid
 	in
 	let newnid = mkDeepCopy n
 	in
@@ -96,7 +127,7 @@ let debugGraph dg =
 	in
 	let dg2 = DG.addnode nn dg'
 	in
-	let dg3 = DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingleB) (DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingle VBoolean) dg2)
+	let dg3 = DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingleB true) (DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingle VBoolean) dg2)
 	in
 	let dg4 = GrbOptimize.removeDead dg3
 	in
@@ -306,7 +337,7 @@ let analysis dg isSQL resultfolder =
 	GrbPrint.printgraph oc dg;
 	close_out oc;
 	(*debugGraph dg;*)
-			(let sccarr = GrbOptimize.SCCFinder.scc_array dg
+		(*	(let sccarr = GrbOptimize.SCCFinder.scc_array dg
 			in
 			print_string "Found strongly connected components\n";
 			Array.iter (fun nodelist ->
@@ -316,7 +347,7 @@ let analysis dg isSQL resultfolder =
 					print_string (String.concat ", " (List.map NewName.to_string nodelist));
 					print_newline ()
 				end
-			) sccarr);
+			) sccarr); *)
 	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity dg))
 	in
@@ -499,7 +530,7 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
-	let dgsimpl4 = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3)))
+	let dgsimpl4 = GrbOptimize.removeDead (GrbImplication.removeRedundantMaxEdges (GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3)))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
@@ -508,7 +539,35 @@ let analysis dg isSQL resultfolder =
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgsimpl5 = (* GrbOptimize.moveLongorsDown (GrbOptimize.removeDead ( *) GrbOptimize.moveNotsUp (GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveJustMergeDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))))) (* )) *)
+	let dgsimpl4_1 = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4)))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_1 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified4_1.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_1;
+	close_out oc;
+	let dgsimpl4_2 = GrbOptimize.removeDead (GrbOptimize.noIntermediateNOTs (GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.getRidOfNaeloobs dgsimpl4_1))))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_2 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified4_2.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_2;
+	close_out oc;
+	let dgsimpl4_3 = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes dgsimpl4_2)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_3 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_out "r2simplified4_3.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_3;
+	close_out oc;
+	(if isSQL then () else exit 10);
+	let dgsimpl5 = (* GrbOptimize.moveLongorsDown (GrbOptimize.removeDead ( GrbOptimize.moveNotsUp ( *) GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveJustMergeDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4_3))))) (* ))) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in
@@ -560,7 +619,7 @@ let analysis dg isSQL resultfolder =
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
 	let oc = open_out "finalgraph.dot"
 	in
-	GrbPrintWithCFlow.printgraph oc dgSingleOutputs;
+	(if isSQL then GrbPrint.printgraph else GrbPrintWithCFlow.printgraph) oc dgSingleOutputs;
 	close_out oc;
 (*	let oc = open_out "leakswhen.result"
 	in

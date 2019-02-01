@@ -3,6 +3,16 @@ open GrbCommons;;
 
 type mappingDirection = MDForward | MDBackward;;
 
+let hexstring_of_int n =
+	let hexdigits = [| "0"; "1"; "2"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "A"; "B"; "C"; "D"; "E"; "F" |]
+	in
+	let nhigh = n / 16
+	in
+	let nlow = n - nhigh * 16
+	in
+	hexdigits.(nhigh) ^ hexdigits.(nlow)
+;;
+
 let printgraph oc dg gdns = (* Sends the description of dg in the dot format to the channel oc *)
 	let needsValuetype =
 		DG.foldnodes (fun n b ->
@@ -128,18 +138,22 @@ let printgraph oc dg gdns = (* Sends the description of dg in the dot format to 
 		let (AITT a) = nn.inputindextype
 		and (AITT b) = nn.outputindextype
 		and (IxM m) = nn.ixtypemap
+		and (bgr,bgg,bgb) = nn.nkind.nodecolor
+		and (fgr,fgg,fgb) = nn.nkind.nodetextcolor
+		in
+		let colorattrs = "style=filled fillcolor=\"#" ^ (hexstring_of_int bgr) ^ (hexstring_of_int bgg) ^ (hexstring_of_int bgb) ^ "\" fontcolor=\"#" ^ (hexstring_of_int fgr) ^ (hexstring_of_int fgg) ^ (hexstring_of_int fgb) ^ "\""
 		in
 		if (Array.length a = 1) && (Array.length b = 1) then
 		begin
-			output_string oc ((dotnodeid nn.id) ^ "[shape=record label=\"{ ");
+			output_string oc ((dotnodeid nn.id) ^ "[shape=record " ^ colorattrs ^ " label=\"{ ");
 			output_string oc "{ ";
 			outputMasked (nn.nkind.nodelabel nn.ixtypemap);
 			output_string oc (" | " ^ (NewName.to_string nn.id) ^ " } | ");
-			outputMapInVContextWithGDims nn.id a b m;
+			outputMapInVContext a b m MDForward;
 			output_string oc " }\"];\n"
 		end else
 		begin
-			output_string oc ((dotnodeid nn.id) ^ " [label=\"");
+			output_string oc ((dotnodeid nn.id) ^ " [" ^ colorattrs ^ " label=\"");
 			output_string oc ((nn.nkind.nodelabel nn.ixtypemap) ^ " " ^ (NewName.to_string nn.id) ^ "\"];\n")
 		end
 	) dg ();

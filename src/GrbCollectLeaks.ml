@@ -16,16 +16,18 @@ let rec (oneOfEach : 'a list list -> 'a list list) = function
 let rec describeDependency dg n =
 	match n.nkind.nodeintlbl with
 		| NNTakeDim _
-		| NNTrue
-		| NNFalse
+		| NNTrue _
+		| NNFalse _
 		| NNError -> []
 		| NNInputExists _
 		| NNInput _ -> [n.nkind.nodelabel n.ixtypemap, "always"]
 		| NNOperation OPGeoDist
 		| NNOperation OPDiv
 		| NNNot
-		| NNAnd
-		| NNLongOr
+		| NNNotFlip _
+		| NNAnd _
+		| NNLongOr _
+		| NNLongAnd _
 		| NNOperation OPCoalesce
 		| NNTuple _
 		| NNOperation OPPlus ->
@@ -96,7 +98,7 @@ let rec describeDependency dg n =
 				let ninp = DG.findnode srcid dg
 				in
 				match prt with
-					| PortSingleB ->
+					| PortSingleB _ ->
 						controldescPl := describeCondition dg ninp
 					| PortSingle _ ->
 						inputdescPl := Some (describeDependency dg ninp)
@@ -134,7 +136,7 @@ let rec describeDependency dg n =
 				let ninp = DG.findnode srcid dg
 				in
 				match prt with
-					| PortSingleB ->
+					| PortSingleB _ ->
 						controldescPl := Some (describeCondition dg ninp)
 					| PortTrue _ ->
 						truedescPl := Some (describeDependency dg ninp)
@@ -164,7 +166,7 @@ and describeCondition dg n =
 	in
 	match n.nkind.nodeintlbl with
 		| NNDimEq -> ""
-		| NNAnd ->
+		| NNAnd _ ->
 			let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -172,7 +174,7 @@ and describeCondition dg n =
 				in (describeCondition dg ninp) :: ll
 			) n []
 			in "All of the following hold: [" ^ (String.concat ", " inpdescs) ^ "]"
-		| NNOr ->
+		| NNOr _ ->
 			let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -180,7 +182,8 @@ and describeCondition dg n =
 				in (describeCondition dg ninp) :: ll
 			) n []
 			in "At least one of the following holds: [" ^ (String.concat ", " inpdescs) ^ "]"
-		| NNNot ->
+		| NNNot
+		| NNNotFlip _ ->
 				let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -189,8 +192,8 @@ and describeCondition dg n =
 			) n []
 			in "The statement \"" ^ (List.hd inpdescs) ^ "\" does not hold"
 		| NNTakeDim _ -> n.nkind.nodelabel n.ixtypemap
-		| NNTrue -> "TRUE"
-		| NNFalse -> "FALSE"
+		| NNTrue _ -> "TRUE"
+		| NNFalse _ -> "FALSE"
 		| NNError -> "ERROR"
 		| NNInputExists _ -> n.nkind.nodelabel n.ixtypemap
 		| NNInput _ -> "The value of " ^ (n.nkind.nodelabel n.ixtypemap)
@@ -231,7 +234,7 @@ and describeCondition dg n =
 		| NNFilter vt ->
 			let descs = collectInputDescs ()
 			in
-			"The value of {" ^ (PortMap.find (PortSingle vt) descs) ^ "}, only if " ^ (PortMap.find PortSingleB descs) ^ " holds true"
+			"The value of {" ^ (PortMap.find (PortSingle vt) descs) ^ "}, only if " ^ (PortMap.find (PortSingleB true) descs) ^ " holds true"
 		| NNSeqNo ->
 			let descs = collectInputDescs ()
 			in
@@ -246,10 +249,14 @@ and describeCondition dg n =
 			in
 			"The sequence number for a value chosen from " ^ bagdesc
 		| NNOperation (OPIntConst c) -> string_of_int c
-		| NNLongOr ->
+		| NNLongOr isVBoolean ->
 			let desc = collectInputDescs ()
 			in
-			"One of the many {" ^ (PortMap.find PortSingleB desc) ^ "} holds"
+			"One of the many {" ^ (PortMap.find (PortSingleB isVBoolean) desc) ^ "} holds"
+		| NNLongAnd isVBoolean ->
+			let desc = collectInputDescs ()
+			in
+			"All of the many {" ^ (PortMap.find (PortSingleB isVBoolean) desc) ^ "} hold"
 		| NNOperation (OPNull _) -> "NULL"
 		| NNOperation OPCoalesce ->
 			let desc = collectInputDescs ()
@@ -262,7 +269,7 @@ and describeCondition dg n =
 		| NNITE vt ->
 			let desc = collectInputDescs ()
 			in
-			"If " ^ (PortMap.find PortSingleB desc) ^ " then " ^ (PortMap.find (PortTrue vt) desc) ^ " else " ^ (PortMap.find (PortFalse vt) desc)
+			"If " ^ (PortMap.find (PortSingleB true) desc) ^ " then " ^ (PortMap.find (PortTrue vt) desc) ^ " else " ^ (PortMap.find (PortFalse vt) desc)
 		| NNOutput _ -> ""
 ;;
 
@@ -393,7 +400,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 			| PortSingle vt ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (srcidpl := Some srcid; srcidbackmappl := Some backmap; vtpl := Some vt)
-			| PortSingleB ->
+			| PortSingleB _ ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (cntrlpl := Some srcid; cntrlbackmappl := Some backmap)
 	) n ();
@@ -532,7 +539,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 					Some r
 				) n None
 				in res
-			| NNAnd ->
+			| NNAnd _ ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -553,7 +560,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				((if underNot then EWDCompute (OPNot, [EWDCompute (OPIsEq, operands)]) else EWDCompute (OPIsEq, operands)), joinDimLists upwardsdims)
 				
-			| NNLongOr ->
+			| NNLongOr _ ->
 				let Some (r1, r2) = DG.nodefoldedges (fun ((IxM cc, _), _, _) _ ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -693,7 +700,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				(EWDAggregate (agname, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r), [ (* freshnewdims *) ])
 			| NNOutput _ -> raise (Failure "Do not expect to see NNOutput at describeNode")
-			| NNOr ->
+			| NNOr _ ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -704,8 +711,8 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				((EWDCompute ((if underNot then OPAnd else OPOr), operands)), joinDimLists upwardsdims)
 
-			| NNTrue -> (EWDCompute (OPBoolConst true, []), [])
-			| NNFalse -> (EWDCompute (OPBoolConst false, []), [])
+			| NNTrue _ -> (EWDCompute (OPBoolConst true, []), [])
+			| NNFalse _ -> (EWDCompute (OPBoolConst false, []), [])
 			| NNError -> raise (Failure "Do not expect to see NNError at describeNode")
 			| NNITE _ -> raise (Failure "Do not expect to see NNITE at describeNode")
 			| NNDimEq ->
@@ -769,7 +776,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 	let cbdimrec = moveDimRecOverEdge nadimrec cntrlbackmap
 	in
 	let cntrdesc = match cntrl.nkind.nodeintlbl with
-		| NNAnd ->
+		| NNAnd _ ->
 			let (cadimrec, _) = moveDimRecInsideNode cbdimrec cntrlfwdmap ca.(0)
 			in
 			DG.nodefoldedges (fun ((IxM cc, _), _, _) ll ->
@@ -1380,6 +1387,311 @@ let rec permutations ll =
 
 
 let output_ewr_to_graph oc ewr =
+	let accGr = List.fold_right (fun (tblname, attrname) mm ->
+		let s = try RLMap.find tblname mm with Not_found -> RLSet.empty
+		in
+		RLMap.add tblname (RLSet.add attrname s) mm
+	) RAInput.access_granted RLMap.empty
+	in
+	let isAttrPrivate tblname attrname =
+		if ((String.length tblname) >= 7) && ((String.uppercase (String.sub tblname 0 7)) = "UNKNOWN") then false else
+		let s = try RLMap.find tblname accGr with Not_found -> RLSet.empty
+		in
+		not (RLSet.mem attrname s)
+	in
+	let rec compareEWRs idEquiv ewr1 ewr2 = match ewr1, ewr2 with
+		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
+		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2
+		| EWRCompute (op1, ll1), EWRCompute (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRComputeGen (op1, ll1), EWRComputeGen (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRSeqNo (sidl1, c1), EWRSeqNo (sidl2, c2) -> (compareEWRs idEquiv c1 c2) && (List.for_all2 (fun (s1,id1) (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)) sidl1 sidl2)
+		| EWRAggregate (ag1, ins1, od1), EWRAggregate (ag2, ins2, od2) ->
+			let res =
+			(ag1 = ag2) &&
+			(List.exists (fun insl2 -> List.for_all2 (fun (id1,s1) (id2,s2) -> (s1 = s2) && (idEquiv id1 id2)) (IdtNameSet.elements ins1) insl2) (permutations (IdtNameSet.elements ins2))) &&
+			((List.length od1.quantifiedrows) = (List.length od2.quantifiedrows)) &&
+			(IdtMap.cardinal od1.outputrows = IdtMap.cardinal od2.outputrows) &&
+			(List.for_all2 (fun m1 m2 -> IdtMap.cardinal m1 = IdtMap.cardinal m2) od1.quantifiedrows od2.quantifiedrows) &&
+			(
+				let or1l = IdtMap.bindings od1.outputrows
+				and qr1ll = List.map IdtMap.bindings od1.quantifiedrows
+				and or2lp = permutations (IdtMap.bindings od2.outputrows)
+				and qr2lpl = List.map (fun x -> permutations (IdtMap.bindings x)) od2.quantifiedrows
+				in
+				List.exists (fun or2l ->
+					let idEqN1 id1 id2 = (idEquiv id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) or1l or2l)
+					in
+					let rec selectElem currIdEq currQR1ll currQR2lpl = match currQR1ll, currQR2lpl with
+						| [], [] -> (compareEWRs currIdEq od1.r_outputthing od2.r_outputthing) && (compareEWRAOTs currIdEq od1.r_outputconds od2.r_outputconds)
+						| (z1::z1s), (z2p::z2ps) -> List.exists (fun z2 ->
+							let nextIdEq id1 id2 = (currIdEq id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) z1 z2)
+							in
+							selectElem nextIdEq z1s z2ps
+						) z2p
+					in
+					selectElem idEqN1 qr1ll qr2lpl
+				) or2lp
+			)
+			in
+			res
+		| _,_ -> false	
+	and compareEWRAOTs idEquiv aot1 aot2 = match aot1, aot2 with
+		| AOTAnd ll1, AOTAnd ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTOr ll1, AOTOr ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTElem e1, AOTElem e2 -> compareEWRs idEquiv e1 e2
+		| _, _ -> false
+	in
+	let ewridtbl = Hashtbl.create 10
+	and rowidtbl = Hashtbl.create 10
+	and nidprivtbl = Hashtbl.create 10
+	in
+	let getRowId rid =
+		try
+			(Hashtbl.find rowidtbl rid, true)
+		with Not_found -> begin
+			let nid = NewName.get ()
+			in
+			Hashtbl.add rowidtbl rid nid;
+			(nid, false)
+		end
+	and getEWRId ewr =
+		let phid = Hashtbl.fold (fun ewr' ewid res ->
+			match res with
+				| Some _ -> res
+				| None -> if compareEWRs (=) ewr ewr' then Some ewid else None
+		) ewridtbl None
+		in
+		match phid with
+			| Some x -> (x, true)
+			| None -> (
+				let nid = NewName.get ()
+				in
+				Hashtbl.add ewridtbl ewr nid;
+				(nid, false))
+	in
+	output_string oc "digraph {\n";
+	let dotnodeid x = "v_" ^ (NewName.to_string x)
+	and subgrstart x = "subgraph cluster_" ^ (NewName.to_string x)
+	in
+	let collectAttributeUses ewstr rowsOfInterest =
+		let mkAddition tblid attrname roi =
+			try
+				let s = IdtMap.find tblid roi
+				in
+				IdtMap.add tblid (RLSet.add attrname s) roi
+			with Not_found -> roi
+		in
+		let rec cau_ewr ewr roi = match ewr with
+			| EWRInput (attrname, tblid) -> mkAddition tblid attrname roi
+			| EWRExists _ -> roi
+			| EWRCompute (_, ll) 
+			| EWRComputeGen (_, ll) -> List.fold_right cau_ewr ll roi
+			| EWRAggregate (_, remaindims, ewrstr) -> 
+				let roi' = IdtNameSet.fold (fun (tblid, attrname) roicurr ->
+					mkAddition tblid attrname roicurr
+				) remaindims roi
+				in
+				cau_struct ewrstr roi'
+			| EWRSeqNo (stridl, upewr) ->
+				let roi' = List.fold_right (fun (attrname, tblid) roicurr ->
+					mkAddition tblid attrname roicurr
+				) stridl roi
+				in
+				cau_ewr upewr roi'
+		and cau_aotewr aot roi = match aot with
+			| AOTElem e -> cau_ewr e roi
+			| AOTAnd ll | AOTOr ll -> List.fold_right cau_aotewr ll roi
+		and cau_struct ewrstr roi =
+			cau_ewr ewrstr.r_outputthing (cau_aotewr ewrstr.r_outputconds roi)
+		in
+		let roi = IdtSet.fold (fun nid m -> IdtMap.add nid RLSet.empty m) rowsOfInterest IdtMap.empty
+		in
+		cau_struct ewstr roi
+	in
+	let rec doOutputEWR ewr =
+		let (nid, alreadyIn) = getEWRId ewr
+		in
+		if alreadyIn then nid else
+		(begin
+			match ewr with
+			| EWRInput (attrname, tblid) -> raise (Failure "doOutputEWR with EWRInput: we should never come to this place")
+			| EWRExists _ -> Hashtbl.add nidprivtbl nid false
+			| EWRCompute (_, ll)
+			| EWRComputeGen (_, ll) ->
+				let upl = List.map doOutputEWR ll
+				in
+				let uplpriv = List.map (Hashtbl.find nidprivtbl) upl
+				in
+				let nidispriv =
+					let res = List.fold_right (||) uplpriv false
+					in
+					Hashtbl.add nidprivtbl nid res; res
+				in
+				let nodelbl, numberinps = ( match ewr with | EWRCompute (opname, _) -> (match opname with
+					| OPPlus -> "+", false
+					| OPNeg -> "-", false
+					| OPMult -> "*", false
+					| OPIsEq -> "=", false
+					| OPLessThan -> "\\<", true
+					| OPLessEqual -> "&#8804;", true
+					| OPGreaterThan -> "\\>", true
+					| OPGreaterEqual -> "&#8805;", true
+					| OPAnd -> "AND", false
+					| OPOr -> "OR", false
+					| OPNot -> "NOT", false
+					| OPDiv -> "&#247;", true
+					| OPIntConst c -> (string_of_int c), false
+					| OPStringConst s -> s, false
+					| OPRealConst ff -> (string_of_float ff), false
+					| OPBoolConst bb -> (string_of_bool bb), false
+					| OPNull _ -> "NULL", false
+					| OPGeoDist -> "&#916;", true
+					| OPCeiling -> "ceil", false
+					| OPCoalesce -> "coalesce", true
+					| OPITE -> "?:", true
+					| OPTuple strl -> ("[" ^ (String.concat "," strl) ^"]"), true
+					| OPProject prname -> ("&#960;" ^ prname), false
+					| OPOrder takeEqual -> ("CNT(" ^ (if takeEqual then "LE" else "LT") ^ ")"), true
+				)
+					| EWRComputeGen (opnamestr, _) -> opnamestr, true
+				)
+				in
+				(
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					List.iteri (fun ifx upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid));
+						let upidpriv = Hashtbl.find nidprivtbl upid
+						in
+						if (numberinps || upidpriv) then
+						begin
+							output_string oc " [";
+							(if numberinps then output_string oc ("label=" ^ (string_of_int (ifx+1)) ^ " "));
+							(if upidpriv then output_string oc "style=bold color=red");
+							output_string oc "]"
+						end;
+						output_string oc ";\n"
+					) upl
+				)
+			| EWRAggregate (agn, remaindims, ewstr) ->
+				let nodelbl = string_of_aggrname agn
+				in
+				let insideid = doOutputStruct ewstr false
+				and groupids = List.map (fun (tblid, attrname) -> doOutputEWR (EWRInput (attrname, tblid))) (IdtNameSet.elements remaindims)
+				in
+				let groupprivs = List.map (Hashtbl.find nidprivtbl) groupids
+				in
+				let gbidispriv = List.fold_right (||) groupprivs false
+				in
+				let nidispriv = gbidispriv || (Hashtbl.find nidprivtbl insideid)
+				in
+				let gbid = NewName.get ()
+				in
+				(
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ((dotnodeid gbid) ^ " [shape=box style=" ^ (if gbidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"GROUP BY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ (if gbidispriv then "[style=bold color=red]" else "") ^ ";\n");
+					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl insideid then " [style=bold color=red]" else "") ^ ";\n");
+					List.iter (fun upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid gbid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n")
+					) groupids
+				)
+			| EWRSeqNo (stridl, upewr) ->
+				let upid = doOutputEWR upewr
+				and groupids = List.map (fun (attrname, tblid) -> doOutputEWR (EWRInput (attrname, tblid))) stridl
+				and keyid = NewName.get ()
+				in
+				let keyispriv = List.fold_right (||) (List.map (Hashtbl.find nidprivtbl) groupids) false
+				and upispriv = Hashtbl.find nidprivtbl upid
+				in
+				let nidispriv = upispriv || keyispriv
+				in
+				(
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ((dotnodeid keyid) ^ " [shape=box style=" ^ (if keyispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"KEY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"SeqNo\" fillcolor=white];\n");
+					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ (if keyispriv then " [style=bold color=red]" else "") ^ ";\n");
+					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if upispriv then " [style=bold color=red]" else "") ^ ";\n");
+					List.iteri (fun idx gid ->
+						output_string oc ((dotnodeid gid) ^ " -> " ^ (dotnodeid keyid) ^ " [label=" ^ (string_of_int (idx+1)) ^ (if Hashtbl.find nidprivtbl gid then " style=bold color=red" else "") ^ "];\n")
+					) groupids
+				)
+		end;
+		nid)
+	and doOutputAOTEWR aot = match aot with
+		| AOTElem x -> doOutputEWR x
+		| AOTAnd ll | AOTOr ll ->
+			let upl = List.map doOutputAOTEWR ll
+			in
+			let nid = NewName.get ()
+			and nidispriv = List.fold_right (||) (List.map (Hashtbl.find nidprivtbl) upl) false
+			in
+			Hashtbl.add nidprivtbl nid nidispriv;
+			output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
+			List.iter (fun upid ->
+				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n");
+			) upl;
+			nid
+	and doOutputStruct ewstr atBeginning =
+		let getIdtSet m = IdtSet.of_list (List.map fst (IdtMap.bindings m))
+		in
+		let interestingRows = List.fold_right (fun m s -> IdtSet.union (getIdtSet m) s) ewstr.quantifiedrows (getIdtSet ewstr.outputrows)
+		in
+		let existAttrs = collectAttributeUses ewstr interestingRows
+		in
+		(if (not atBeginning) then
+		begin
+			let thrid = NewName.get ()
+			in
+			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=cyan\n\n")
+		end);
+		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s (IdtMap.find k existAttrs)) ewstr.outputrows
+		in
+		let (drawRowIds,_) = List.fold_left (fun (m,bb) qrows -> (IdtMap.mapi (fun k s -> doOutputRow false bb k s (IdtMap.find k existAttrs)) qrows, not bb)) (drawRowIds0, true) ewstr.quantifiedrows
+		in
+		let resid = doOutputEWR ewstr.r_outputthing
+		and condid = doOutputAOTEWR ewstr.r_outputconds
+		in
+		let nid = NewName.get ()
+		in
+		let resispriv = Hashtbl.find nidprivtbl resid
+		and condispriv = Hashtbl.find nidprivtbl condid
+		in
+		let nidispriv = resispriv || condispriv
+		in
+		Hashtbl.add nidprivtbl nid nidispriv;
+		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue" else "white") ^ "];\n");
+		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1" ^ (if resispriv then " style=bold color=red" else "") ^ "];\n");
+		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2" ^ (if condispriv then " style=bold color=red" else "") ^ "];\n");
+		(if (not atBeginning) then
+		begin
+			output_string oc ("}\n")
+		end);
+		nid
+	and doOutputRow isFinalOut isExists rid tbln attrset =
+		let (oid, alreadyIn) = getRowId rid
+		in
+		if alreadyIn then oid
+		else
+		begin
+			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^";\n");
+				RLSet.iter (fun attrname ->
+					let (nid,_) = getEWRId (EWRInput (attrname, rid))
+					in
+					let nidispriv = isAttrPrivate tbln attrname
+					in
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ("  " ^ (dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ attrname ^ "\" fillcolor=white];\n")
+				) attrset;
+			output_string oc "}\n";
+			oid
+		end
+	in
+	ignore (doOutputStruct ewr true);
+	output_string oc "}\n"
+;;
+
+let output_ewr_to_graph_without_deps oc ewr =
 	let rec compareEWRs idEquiv ewr1 ewr2 = match ewr1, ewr2 with
 		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
 		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2

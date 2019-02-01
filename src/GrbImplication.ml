@@ -26,7 +26,7 @@ let writeItAllToZ3 dg oc =
 				| NNLongMerge _
 				| NNMerge _ ->
 					DG.nodefoldedges (fun ((IxM cc,_), _, prt) bb ->
-						if bb then true else if prt = PortSingleB then false else
+						if bb then true else if (match prt with PortSingleB _ -> true | _ -> false) then false else
 						let Some (srcid,_,_) = cc.(0)
 						in IdtSet.mem srcid !dimPrLoc
 					) n false
@@ -54,7 +54,7 @@ let writeItAllToZ3 dg oc =
 		in
 		let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "S") nb.(0)))
 		in
-		let vType = if IdtSet.mem n.id dimProducers then "S" else if n.nkind.outputtype = VBoolean then "Bool" else "Int"
+		let vType = if IdtSet.mem n.id dimProducers then "S" else if (n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob) then "Bool" else "Int"
 		in
 		output_string oc ("(declare-fun f" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") Bool)\n");
 		output_string oc ("(declare-fun v" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") " ^ vType ^ ")\n");
@@ -129,7 +129,7 @@ let writeItAllToZ3 dg oc =
 				DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
 					let Some (nprevid, _, backmap) = cc.(0)
 					in
-					if prt = PortSingleB then
+					if prt = PortSingleB true then
 					begin
 						backmappl1 := Some backmap;
 						previdpl1 := Some nprevid
@@ -206,12 +206,12 @@ let writeItAllToZ3 dg oc =
 		and output_forall_close () = if needsForAll then output_string oc ")" else ()
 		in
 		match n.nkind.nodeintlbl with
-		| NNAnd
-		| NNOr -> begin
+		| NNAnd _
+		| NNOr _ -> begin
 			output_string oc "(assert ";
 			output_forall_open ();
 			output_string oc "(= (";
-			output_string oc (match n.nkind.nodeintlbl with | NNAnd -> "and " | _ -> "or ");
+			output_string oc (match n.nkind.nodeintlbl with | NNAnd _ -> "and " | _ -> "or ");
 			DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
@@ -224,7 +224,7 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")\n"
 		end
-		| NNLongOr -> begin
+		| NNLongOr _ -> begin
 			let backmappl = ref None
 			and previdpl = ref None
 			in
@@ -335,7 +335,7 @@ let writeItAllToZ3 dg oc =
 			and previdpl = ref None
 			in
 			DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
-				if prt = PortSingleB then () else
+				if prt = PortSingleB true then () else
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
 				backmappl := Some backmap;
@@ -489,7 +489,7 @@ let writeItAllToZ3 dg oc =
 			DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
-				if prt = PortSingleB then
+				if prt = PortSingleB true then
 				begin
 					backmappli := Some backmap;
 					previdpli := Some nprevid
@@ -703,7 +703,7 @@ let writeOrderingToZ3 dg oc =
 	and idAndArgsToStr = idAndArgsToStrWithPref "x"
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.outputtype = VInteger then
+		if n.nkind.outputtype = VTimePoint then
 		begin
 			let (AITT nb) = n.outputindextype
 			in
@@ -715,11 +715,12 @@ let writeOrderingToZ3 dg oc =
 	let toBeConnected = function
 		| NNMaximum
 		| NNTimePoint _
-		| NNOperation (OPIntConst _) -> true
+		| NNZeroTimePoint
+		| NNOperation (OPTimePointConst _) -> true
 		| _ -> false
 	in
 	DG.foldnodes (fun n () ->
-		if (n.nkind.outputtype = VInteger) && (toBeConnected n.nkind.nodeintlbl) then
+		if (n.nkind.outputtype = VTimePoint) && (toBeConnected n.nkind.nodeintlbl) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (AITT nb) = n.outputindextype
@@ -777,7 +778,7 @@ let writeOrderingToZ3 dg oc =
 				end;
 				output_string oc "(< ";
 				DG.nodefoldedges (fun ((IxM cc,_),_,prt) () ->
-					if prt = (PortSingle VInteger) then
+					if prt = (PortSingle VTimePoint) then
 						let Some (srcid,_,backmap) = cc.(0)
 						in
 						output_string oc (idAndArgsToStr srcid backmap)
@@ -788,7 +789,9 @@ let writeOrderingToZ3 dg oc =
 				if needsForAll then begin output_string oc ")" end;
 				output_string oc ")\n"
 			end
-			| NNOperation (OPIntConst xx) ->
+			| NNZeroTimePoint ->
+				output_string oc ("(assert (= " ^ (idAndArgsToStr n.id fwdmap) ^ " 0))\n" )
+			| NNOperation (OPTimePointConst (Left xx)) | NNOperation (OPTimePointConst (Right xx)) ->
 				output_string oc ("(assert (= " ^ (idAndArgsToStr n.id fwdmap) ^ " " ^ (string_of_int xx) ^ "))\n" )
 		end
 	) dg ()
@@ -799,7 +802,7 @@ let writeBooleanDescToZ3 dg oc =
 	and idAndArgsToStr = idAndArgsToStrWithPref "x"
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.outputtype = VBoolean then
+		if (n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob) then
 		begin
 			let (AITT nb) = n.outputindextype
 			in
@@ -809,15 +812,16 @@ let writeBooleanDescToZ3 dg oc =
 		end
 	) dg ();
 	let toBeConnected = function
-		| NNAnd
+		| NNAnd _
 		| NNId
-		| NNOr
-		| NNLongOr
+		| NNOr _
+		| NNLongOr _
+		| NNNotFlip _
 		| NNNot -> true
 		| _ -> false
 	in
 	DG.foldnodes (fun n () ->
-		if (n.nkind.outputtype = VBoolean) && (toBeConnected n.nkind.nodeintlbl) then
+		if ((n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob)) && (toBeConnected n.nkind.nodeintlbl) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (AITT nb) = n.outputindextype
@@ -829,15 +833,15 @@ let writeBooleanDescToZ3 dg oc =
 			let Some (_, _, fwdmap) = ncc.(0)
 			in
 			match n.nkind.nodeintlbl with
-			| NNAnd
-			| NNOr -> begin
+			| NNAnd _
+			| NNOr _ -> begin
 				output_string oc "(assert ";
 				if needsForAll then 
 				begin
 					output_string oc ("(forall (" ^ qvarsNA ^ ") ")
 				end;
 				output_string oc "(= (";
-				output_string oc (match n.nkind.nodeintlbl with | NNAnd -> "and " | _ -> "or ");
+				output_string oc (match n.nkind.nodeintlbl with | NNAnd _ -> "and " | _ -> "or ");
 				DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
 					let Some (nprevid, _, backmap) = cc.(0)
 					in
@@ -850,7 +854,12 @@ let writeBooleanDescToZ3 dg oc =
 				if needsForAll then (output_string oc ")");
 				output_string oc ")\n"
 			end
-			| NNLongOr -> begin
+			| NNLongOr _
+			| NNLongAnd _ -> begin
+				let isLongOr = (match n.nkind.nodeintlbl with NNLongOr _ -> true | _ -> false)
+				in
+				let outputTwo s1 s2 = if isLongOr then output_string oc (s1 ^ " " ^ s2) else output_string oc (s2 ^ " " ^ s1)
+				in
 				let backmappl = ref None
 				and previdpl = ref None
 				in
@@ -866,9 +875,7 @@ let writeBooleanDescToZ3 dg oc =
 				output_string oc "(assert ";
 				output_string oc ("(forall (" ^ qvarsNA ^ ") ");
 				output_string oc "(=> ";
-				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc " ";
-				output_string oc (idAndArgsToStr n.id fwdmap);
+				outputTwo (idAndArgsToStr previd backmap) (idAndArgsToStr n.id fwdmap);
 				output_string oc ")))\n";
 				let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
 				in
@@ -903,16 +910,15 @@ let writeBooleanDescToZ3 dg oc =
 					output_string oc ") " end
 				);
 				output_string oc "(=> ";
-				output_string oc (idAndArgsToStr n.id fwdmap);
-				output_string oc " ";
-				output_string oc (idAndArgsToStr previd backmap);
+				outputTwo (idAndArgsToStr n.id fwdmap) (idAndArgsToStr previd backmap);
 				output_string oc ")";
 				(if needsQE then output_string oc ")");
 				(if needsQA then output_string oc ")");
 				output_string oc ")\n"
 			end
 			| NNId
-			| NNNot -> begin
+			| NNNot
+			| NNNotFlip _ -> begin
 				let isNeg = match n.nkind.nodeintlbl with | NNId -> false | _ -> true
 				in
 				let backmappl = ref None
@@ -945,7 +951,7 @@ let askZ3ForRedundantEdges dg oc =
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.nodeintlbl = NNAnd then
+		if (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (IxM ncc) = n.ixtypemap
@@ -990,42 +996,46 @@ let askZ3ForRedundantMaxEdges dg0 oc =
 	output_string oc "(reset)\n";
 	writeOrderingToZ3 !currdg oc;
 	let () = DG.foldnodes (fun n0 () ->
-		if n0.nkind.nodeintlbl <> NNMaximum then () else
-		let (AITT na) = n0.inputindextype
-		and (IxM ncc) = n0.ixtypemap
-		in
-		let Some (_, _, fwdmap) = ncc.(0)
-		in
-		DG.nodefoldedges (fun ((IxM cc, eid), _, _) () ->
-			let Some (previd, _, backmap) = cc.(0)
-			in
-			output_string oc "(push)\n";
-			output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n0.id) ^ "...\")\n" );
-			Array.iteri (fun idx _ ->
-				output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
-			) na.(0);
-			DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
-				if eid = eid' then () else
-				let Some (previd',_,backmap') = cc'.(0)
+		match n0.nkind.nodeintlbl with
+			| NNMaximum ->
+			begin
+				let (AITT na) = n0.inputindextype
+				and (IxM ncc) = n0.ixtypemap
 				in
-				output_string oc "(assert (";
-				output_string oc (if eid < eid' then "< " else "<= ");
-				output_string oc (idAndArgsToStr previd' backmap');
-				output_string oc " ";
-				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc "))\n"
-			) n0 ();
-			output_string oc "(check-sat)\n";
-			flush oc;
-			output_string oc "(pop)\n"
-			) n0 ()
-		) !currdg ()
-		in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				DG.nodefoldedges (fun ((IxM cc, eid), _, _) () ->
+					let Some (previd, _, backmap) = cc.(0)
+					in
+					output_string oc "(push)\n";
+					output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n0.id) ^ "...\")\n" );
+					Array.iteri (fun idx _ ->
+						output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+					) na.(0);
+					DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
+						if eid = eid' then () else
+						let Some (previd',_,backmap') = cc'.(0)
+						in
+						output_string oc "(assert (";
+						output_string oc (if eid < eid' then "< " else "<= ");
+						output_string oc (idAndArgsToStr previd' backmap');
+						output_string oc " ";
+						output_string oc (idAndArgsToStr previd backmap);
+						output_string oc "))\n"
+					) n0 ();
+					output_string oc "(check-sat)\n";
+					flush oc;
+					output_string oc "(pop)\n"
+				) n0 ()
+			end
+			| _ -> ()
+	) !currdg ()
+	in
 	output_string oc "(exit)\n";
 	flush oc
 ;;
 
-let removeRedundantMaxEdges dg0 =
+let removeRedundantMaxEdges_alternate dg0 =
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	let currdg = ref dg0
@@ -1112,7 +1122,7 @@ let removeRedundantEdgesWithZ3_alternate dg0 =
 		let dgForIter = !currdg
 		in
 		DG.foldnodes (fun n0 () ->
-			if n0.nkind.nodeintlbl = NNAnd then
+			if (match n0.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then
 			begin
 				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
 				let changes = ref false
@@ -1178,6 +1188,190 @@ let removeRedundantEdgesWithZ3_alternate dg0 =
 
 let rrewz_entry_count = ref 0;;
 
+let removeRedundantMaxEdges dg0 =
+	print_endline "Enter removeRedundantMaxEdges";
+	let idAndArgsToStr = idAndArgsToStrWithPref "d"
+	and writeBothChans oc1 oc2 s = (output_string oc1 s; output_string oc2 s)
+	in
+	let x = !rrewz_entry_count
+	in
+	rrewz_entry_count := x + 1;
+	let tc = open_out ("removeRedundantMaxEdges_" ^ (string_of_int x))
+	in
+	let currdg = ref (DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
+		let Some (srcid, _, _) = cc.(0)
+		in
+		let nsrc = DG.findnode srcid dgcurr
+		in
+		if (nsrc.nkind.nodeintlbl = NNError) && ((portdesc prt).inputnum = PortUnbounded) then
+			DG.remedge eid dgcurr
+		else dgcurr
+	) dg0 dg0)
+	and runagain = ref true
+	in
+	while !runagain do
+		print_endline "Start iteration";
+		runagain := false;
+		let dgForIter = !currdg
+		in
+		DG.foldnodes (fun n0 () ->
+			let isTimepointComparison nx =
+				DG.nodefoldedges (fun ((IxM cc, _),_,_) b ->
+					if (not b) then false else
+					let Some (srcid,_,_) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dgForIter
+					in
+					(srcn.nkind.outputtype = VTimePoint)
+				) nx true
+			in
+			if (n0.nkind.nodeintlbl = NNMaximum) || ((n0.nkind.nodeintlbl = NNOperation OPLessThan) && (isTimepointComparison n0)) then
+			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
+				let changes = ref false
+				and n = DG.findnode n0.id !currdg
+				in
+				let (AITT na) = n.inputindextype
+				and (IxM ncc) = n.ixtypemap
+				in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				(if n0.nkind.nodeintlbl = NNMaximum then
+				begin
+					DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
+					(* if not !changes then *)
+						begin
+							print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
+							output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
+							let (ic,oc) = Unix.open_process "z3 -in"
+							in
+							writeBothChans oc tc "(set-option :timeout 20)\n";
+							writeBothChans oc tc "(declare-sort S)\n";
+							writeOrderingToZ3 !currdg oc;
+							writeOrderingToZ3 !currdg tc;
+							print_string "Sent description to Z3\n";
+							let Some (previd, _, backmap) = cc.(0)
+							in
+							Array.iteri (fun idx _ ->
+								writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+							) na.(0);
+							DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
+								if testeid = eid' then () else
+								let Some (previd',_,backmap') = cc'.(0)
+								in
+								writeBothChans oc tc "(assert (";
+								writeBothChans oc tc (if testeid < eid' then "< " else "<= ");
+								writeBothChans oc tc (idAndArgsToStr previd' backmap');
+								writeBothChans oc tc " ";
+								writeBothChans oc tc (idAndArgsToStr previd backmap);
+								writeBothChans oc tc "))\n"
+							) n0 ();
+							print_endline "Calling check-sat";
+							writeBothChans tc oc "(check-sat)\n";
+							flush oc;
+							let answer = input_line ic
+							in
+							print_endline "Received answer";
+							(if answer = "unknown" then
+							begin
+								print_endline ("Could not figure out if max-input edge " ^ (NewName.to_string testeid) ^ " is removable")
+							end);
+							(if answer = "unsat" then
+							begin
+								print_endline "The answer was UNSAT";
+								changes := true;
+								runagain := true;
+								currdg := DG.remedge testeid !currdg;
+								print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
+							end);
+							writeBothChans oc tc "(exit)\n";
+							output_string tc ("Answer is " ^ answer ^ "\n");
+							flush oc;
+							ignore (Unix.close_process (ic,oc));
+						end
+					) n ()
+				end else if n.nkind.nodeintlbl = NNOperation OPLessThan then
+				begin
+					let (ic,oc) = Unix.open_process "z3 -in"
+					in
+					writeBothChans oc tc "(set-option :timeout 20)\n";
+					writeBothChans oc tc "(declare-sort S)\n";
+					writeOrderingToZ3 !currdg oc;
+					writeOrderingToZ3 !currdg tc;
+					print_string "Sent description to Z3\n";
+					let eid1 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 1))
+					and eid2 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 2))
+					in
+					let ((IxM cc1,_),_,_) = DG.findedge eid1 !currdg
+					and ((IxM cc2,_),_,_) = DG.findedge eid2 !currdg
+					in
+					let Some (srcid1,_,backmap1) = cc1.(0)
+					and Some (srcid2,_,backmap2) = cc2.(0)
+					and alwaysFalse = ref false
+					and alwaysTrue = ref false
+					in
+					Array.iteri (fun idx _ ->
+						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n");
+					) na.(0);
+					writeBothChans oc tc "(push)\n";
+					writeBothChans oc tc "(assert (< ";
+					writeBothChans oc tc (idAndArgsToStr srcid1 backmap1);
+					writeBothChans oc tc " ";
+					writeBothChans oc tc (idAndArgsToStr srcid2 backmap2);
+					writeBothChans oc tc "))\n";
+					print_endline "Calling check-sat for always false";
+					writeBothChans oc tc "(check-sat)\n";
+					flush oc;
+					let answer = input_line ic
+					in
+					print_endline "Received answer";
+					output_string tc ("Answer is " ^ answer ^ "\n");
+					(if answer = "unknown" then
+						print_endline "Received \"unknown\""
+					);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT";
+						alwaysFalse := true;
+					end);
+					writeBothChans oc tc "(pop)\n";
+					writeBothChans oc tc "(assert(<= ";
+					writeBothChans oc tc (idAndArgsToStr srcid2 backmap2);
+					writeBothChans oc tc " ";
+					writeBothChans oc tc (idAndArgsToStr srcid1 backmap1);
+					writeBothChans oc tc "))\n";
+					print_endline "Calling check-sat for always true";
+					writeBothChans oc tc "(check-sat)\n";
+					flush oc;
+					let answer = input_line ic
+					in
+					print_endline "Received answer";
+					output_string tc ("Answer is " ^ answer ^ "\n");
+					(if answer = "unknown" then
+						print_endline "Received \"unknown\""
+					);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT";
+						alwaysTrue := true;
+					end);
+					writeBothChans oc tc "(exit)\n";
+					flush oc;
+					ignore (Unix.close_process (ic,oc));
+					(if !alwaysFalse || !alwaysTrue then
+					begin
+						let nnew = {n with nkind = if !alwaysFalse then nkFalse else nkTrue; inputs = PortMap.empty}
+						in
+						currdg := DG.changenode nnew !currdg
+					end)
+				end);
+			end
+		) dgForIter ()
+	done;
+	close_out tc;
+	!currdg
+;;
+
 let removeRedundantEdgesWithZ3 dg0 =
 	print_endline "Enter removeRedundantEdges";
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
@@ -1197,11 +1391,11 @@ let removeRedundantEdgesWithZ3 dg0 =
 		let dgForIter = !currdg
 		in
 		DG.foldnodes (fun n0 () ->
-			if (n0.nkind.nodeintlbl = NNAnd) || (n0.nkind.nodeintlbl = NNOr) then
+			if (match n0.nkind.nodeintlbl with NNAnd _ | NNOr _ -> true | _ -> false) then
 			begin
 				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
 				let changes = ref false
-				and isAnd = (n0.nkind.nodeintlbl = NNAnd)
+				and isAnd = (match n0.nkind.nodeintlbl with NNAnd _ -> true | _ -> false)
 				and n = DG.findnode n0.id !currdg
 				in
 				let (AITT na) = n.inputindextype

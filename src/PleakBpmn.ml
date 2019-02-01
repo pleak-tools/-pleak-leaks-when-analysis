@@ -539,11 +539,13 @@ let collectFromFile grrepr =
 			end
 			else if tagname = "bpmn2:subProcess" then
 			begin
-				let nodeonpic0 = {
+				let nodeonpic0pre = {
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPSubprocess;
 					attrs = attrwithname;
 				}
+				in
+				let nodeonpic0 = if (RLMap.mem "name" nodeonpic0pre.attrs) && ((RLMap.find "name" nodeonpic0pre.attrs) <> "") then nodeonpic0pre else {nodeonpic0pre with attrs = RLMap.add "name" (Xml.attrib xmlprocesselem "id") nodeonpic0pre.attrs}
 				in
 				let nodeonpic1 =
 					try
@@ -1054,14 +1056,17 @@ let replicateAfterReplicate grrepr =
 					IdtSet.fold (fun edgeid res -> match res with
 						| Some _ -> res
 						| None ->
+							(try
 							let edge = IdtMap.find edgeid gr0.edges
 							in
 							if edge.kind = EOPSeqFlow then Some edge else None
+							with Not_found -> None )
 					) fstprocoutg None
 				else
 					IdtSet.fold (fun edgeid res -> match res with
 						| Some _ -> res
 						| None ->
+							(try
 							let edge = IdtMap.find edgeid gr0.edges
 							in
 							if edge.kind <> EOPBoundary then None else
@@ -1069,6 +1074,7 @@ let replicateAfterReplicate grrepr =
 							in
 							if (RLMap.find "eventtype" boundedvnode.attrs) <> endingtype then None else
 							Some (IdtMap.find (IdtSet.choose boundedvoutg) gr0.edges)
+							with Not_found -> None)
 					) fstprocoutg None
 			in
 			let (followtaskandevids, stopnow) =
@@ -1098,7 +1104,11 @@ let replicateAfterReplicate grrepr =
 			end
 			in
 			if stopnow then (gr0, handledNodes) else
-			if (IdtSet.inter handledNodes followtaskandevids) <> IdtSet.empty then raise (Failure "The branches following a subprocess will merge somewhere down the line") else
+			if (IdtSet.inter handledNodes followtaskandevids) <> IdtSet.empty then
+				let nodelist = String.concat ", " (List.map NewName.to_string (IdtSet.elements (IdtSet.inter handledNodes followtaskandevids)))
+				in
+				begin raise (Failure ("The branches following a subprocess will merge somewhere down the line. Offending nodes: " ^ nodelist))
+			end else
 			let (followdataids,_) = IdtSet.fold (fun followtaskevid (gooddataids, alldataids) ->
 				let (ften, fteog, fteinc) = IdtMap.find followtaskevid gr0.nodes
 				in
@@ -1140,7 +1150,7 @@ let replicateAfterReplicate grrepr =
 			let newprocn = {
 				id = NewName.get ();
 				kind = NOPSubprocess;
-				attrs = RLMap.singleton "repeat" "parallel";
+				attrs = RLMap.add "name" (endingtype ^ " followup of " ^ (RLMap.find "name" nowprocn.attrs)) (RLMap.singleton "repeat" "parallel");
 			}
 			and newstartnode = {
 				id = NewName.get ();
@@ -1201,6 +1211,11 @@ let replicateAfterReplicate grrepr =
 				kind = NOPTask;
 				attrs = RLMap.singleton "name" "Send";
 			}
+			and dummydatainitializer = {
+				id = NewName.get ();
+				kind = NOPTask;
+				attrs = RLMap.add "sql" ("throw_" ^ (NewName.to_string newstartnode.id) ^ ".v = \"DUMMY\"") (RLMap.singleton "name" ("Intialize throw_" ^ (NewName.to_string newstartnode.id)));
+			}
 			in
 			let datasendcontainedge = {
 				id = NewName.get ();
@@ -1223,8 +1238,17 @@ let replicateAfterReplicate grrepr =
 				kind = EOPMsgFlow;
 				attrs = RLMap.empty;
 			}
+			and datainitializingedge = {
+				id = NewName.get ();
+				src = dummydatainitializer.id;
+				tgt = dummydatasend.id;
+				kind = EOPWrite;
+				attrs = RLMap.empty;
+			}
 			in
-			let gr3 = grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddNode (grreprPutTaskToSeqFlow gr2 (grreprIncomingEdgeOfKind gr2 firstprocendnodeid EOPSeqFlow) dummydatasender) dummydatasend) datasendcontainedge) datasendingedge) msgflowedge
+			let gr2a = grreprPutTaskToSeqFlow gr2 (grreprIncomingEdgeOfKind gr2 firstprocendnodeid EOPSeqFlow) dummydatasender
+			in
+			let gr3 = grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddNode (grreprPutTaskToSeqFlow gr2a (grreprIncomingEdgeOfKind gr2a dummydatasender.id EOPSeqFlow) dummydatainitializer) dummydatasend) datasendcontainedge) datasendingedge) msgflowedge) datainitializingedge
 			in
 			let gr4 = if endingtype = "plain" then gr3 else
 				let Some boundaryEventId = IdtSet.fold (fun bedgeid res ->
@@ -1426,7 +1450,7 @@ let replicateFollowsReplicate grrepr =
 		in
 		let gr3 = {gr2 with nodes = IdtMap.add startnode.id (newstartnode, stnoutg, stnincom) gr2.nodes}
 		in
-		let gr4 = grreprRemoveNode (cutSequenceOverNode gr3 endnodeid) endnodeid
+		let gr4 = grreprRemoveNode (grreprRemoveNode (cutSequenceOverNode gr3 endnodeid) endnodeid) procid
 		in
 		(anychange := true; gr4)
 	) grrepr.nodes grrepr
@@ -3098,7 +3122,7 @@ let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = f
 	in
 	let grrepr0 = (z "4" joinSameNameDatasets) ((z "3" defaultsToEdgeAttrs) ((z "2" commentsToAttrs) ((z "1" collectFromFile) xmlrepr)))
 	in
-	let grrepr1 = (z "12" copyBeforeSend) ((z "11" foldParallelParallelGW) ((z "10" replicateAfterReplicate) ((z "9" conditionalTwoMsgReceive) ((z "8" dissolveNonreplSubproc) ((z "7" handle2ndtryConstellation) ((z "6" oneEndOfEachType) ((z "5" moveMsgFlowToStartNode) grrepr0)))))))
+	let grrepr1 = (z "12" copyBeforeSend) ((z "11" foldParallelParallelGW) ((z "10" replicateAfterReplicate) ((z "9" conditionalTwoMsgReceive) ((z "8" dissolveNonreplSubproc) ((z "7" handle2ndtryConstellation) ( (* (z "6" oneEndOfEachType) *) ((z "5" moveMsgFlowToStartNode) grrepr0)))))))
 	in
 	let grrepr = 
 		let keepgoing = ref true

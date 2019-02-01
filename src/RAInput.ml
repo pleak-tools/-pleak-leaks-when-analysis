@@ -1,7 +1,9 @@
 open GrbGraphs;;
 open GrbInput;;
 
-let aiddistrDbdesc =
+let access_granted = [("parameters", "shipname"); ("parameters", "deadline"); ("ship", "name"); ("port", "port_id"); ("port", "latitude"); ("port", "longitude"); ("berth", "berth_id"); ("port", "offloadcapacity"); ("port", "harbordepth"); ("port", "available"); ("berth", "berthlength"); ("slot", "slot_id"); ("berth", "port_id"); ("slot", "berth_id"); ("slot", "port_id"); ("ship", "ship_id")];;
+
+let orig_aiddistrDbdesc =
      RLMap.add "slot"
     (RLMap.add "port_id" VInteger (RLMap.add "berth_id" VInteger (RLMap.add "slot_id" VInteger (RLMap.add "ship_id" VInteger (RLMap.add "slotstart" VInteger (RLMap.singleton "slotend" VInteger))))), [RLSet.from_list ["port_id"; "berth_id"; "slot_id"]])
   (
@@ -18,7 +20,21 @@ let aiddistrDbdesc =
     (RLMap.add "param_id" VUnit (RLMap.add "deadline" VInteger (RLMap.singleton "shipname" VString)), [RLSet.singleton "param_id"])
   ))));;
 
-let aiddistrQuery =
+let simpleCountDbdesc =
+	RLMap.singleton "t1" (RLMap.add "y" VInteger (RLMap.add "x" VInteger (RLMap.singleton "t1_id" VInteger)), [RLSet.singleton "t1_id"]);;
+
+let simpleCountQuery =
+	RAProject (RAAggregate (RATable "t1", ["y"], [("x", AGCount)]), ["x"]);;
+
+(* SELECT COUNT( * ) FROM t1 GROUP BY y *)
+let simpleCountQuery2 =
+	RAProject (RARenameCol ("c", "x", RAAggregate (RANewColumn (RATable "t1", "c", RAXoper (OPIntConst 1, [])), ["y"], [("c", AGSum)])), ["x"; "y"]);;	
+
+(* SELECT y, COUNT( * ) FROM t1 where 2 * x<y GROUP BY y *)
+let simpleCountQuery3 =
+	RAProject (RARenameCol ("c", "x", RAAggregate (RANewColumn (RAFilter (RATable "t1", RAXoper (OPLessThan, [RAXoper (OPMult,[RAXoper (OPIntConst 2,[]); RAXattribute "x"]); RAXattribute "y"]) ), "c", RAXoper (OPIntConst 1, [])), ["y"], [("c", AGCount)])), ["x"; "y"]);;	
+
+let orig_aiddistrQuery =
 let earliest_arrival ship_lat ship_long port_lat port_long max_speed =
     RAXoper (OPCeiling, [RAXoper (OPDiv, [RAXoper (OPGeoDist, [RAXattribute ship_lat; RAXattribute ship_long; RAXattribute port_lat; RAXattribute port_long]); RAXattribute max_speed])])
 in
@@ -207,3 +223,8 @@ RALetExp ("slot_assignment",  RARenameCol("port.port_id", "port_id",
   )))),
   RAUnionWithDifferentSchema(RAUnionWithDifferentSchema(RATable "slot_assignment", RATable "feasible_ports"), RATable "reachable_ports")
 )))))));;
+
+let aiddistrDbdesc = orig_aiddistrDbdesc (* simpleCountDbdesc *);;
+
+let aiddistrQuery = orig_aiddistrQuery (* simpleCountQuery3 *);;
+
