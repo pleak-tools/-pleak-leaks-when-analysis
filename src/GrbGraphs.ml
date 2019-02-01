@@ -121,7 +121,7 @@ module IdtMap = MyMap(struct type t = NewName.idtype let compare = Pervasives.co
 (* Index types *)
 
 type valuetype =
-  NoValue | VUnit | VBoolean | VInteger | VReal | VString | VAny | VBag of (string * valuetype) list * valuetype | VTuple of (string * valuetype) list;;
+  NoValue | VUnit | VBoolean | VNaeloob | VInteger | VTimePoint | VReal | VString | VAny | VBag of (string * valuetype) list * valuetype | VTuple of (string * valuetype) list;;
   
 (* type leafindextagtype = LIxTUnit | LIxTBool |LIxTNat | LIxTString;; *)
 
@@ -434,7 +434,9 @@ end);;
 let rec string_of_valuetype = function
   NoValue -> "no value"
 | VBoolean -> "boolean"
+| VNaeloob -> "inv-boolean"
 | VInteger -> "integer"
+| VTimePoint -> "timepoint"
 | VReal -> "real"
 | VString -> "string"
 | VAny -> "any"
@@ -449,7 +451,7 @@ let inclvalue x y = match x,y with  (* strict inclusion *)
 
 let ns_inclvalue x y = (x=y) || (inclvalue x y);;
 
-type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool;;
+type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPTimePointConst of (int,int) either | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool;;
 
 let string_of_opname = function
 | OPPlus -> "+"
@@ -476,6 +478,7 @@ let string_of_opname = function
 | OPTuple ll -> "[" ^ (string_of_list id (intersperse ll ", ")) ^ "]-tuple"
 | OPProject s -> "Pr " ^ s
 | OPOrder b -> "CNT(" ^ (if b then "LE" else "LT") ^ ")"
+| OPTimePointConst vx -> (match vx with Left x -> (string_of_int x) ^ "L" | Right x -> (string_of_int x) ^ "R")
 ;;
 
 type aggregationname = AGMax | AGMin | AGSum | AGCount | AGExist | AGAverage | AGMakeBag;;
@@ -495,19 +498,23 @@ type nodename =
 | NNInput of string * valuetype * bool
 | NNInputExists of string
 | NNId
-| NNAnd
+| NNAnd of bool
 | NNIsEq
-| NNLongOr
+| NNIsNEq
+| NNLongOr of bool
+| NNLongAnd of bool
 | NNMakeBag of (string * valuetype) list
 | NNSeqNo
 | NNNot
+| NNNotFlip of bool (* the argument indicates whether the output is a VBoolean (true) or a VNaeloob (false) *)
 | NNFilter of valuetype
 | NNOperation of operationname
 | NNAggregate of aggregationname
 | NNOutput of RLSet.t (* description of where this output came from *)
-| NNOr
-| NNTrue
-| NNFalse
+| NNOr of bool
+| NNTrue of bool
+| NNFalse of bool
+| NNZeroTimePoint
 | NNError
 | NNITE of valuetype
 | NNDimEq
@@ -522,8 +529,6 @@ type nodename =
 | NNGeneric of string * int
 | NNAddrGen of NewName.idtype * int * int
 | NNTimePoint of string * int
-| NNLongUpdCombine of string
-| NNUpdCombine of string
 ;;
 
 type portsize = PortBounded of int | PortUnbounded;;
@@ -531,12 +536,12 @@ type portsize = PortBounded of int | PortUnbounded;;
 type portname = 
 | PortSingle of valuetype
 | PortMulti of valuetype
-| PortSingleB
+| PortSingleB of bool  (* "true" means the input is a VBoolean *)
 | PortUSingleB
 | PortOperInput of int
 | PortCompare
-| PortStrictB
-| PortUnstrB
+| PortStrictB of bool
+| PortUnstrB of bool
 | PortSeqNo of int * string * valuetype
 | PortTrue of valuetype
 | PortFalse of valuetype
@@ -546,10 +551,10 @@ type portname =
 let string_of_portname = function
 | PortSingle vt -> "PortSingle(" ^ (string_of_valuetype vt) ^ ")"
 | PortMulti vt -> "PortMulti(" ^ (string_of_valuetype vt) ^ ")"
-| PortSingleB -> "PortSingleB"
+| PortSingleB b -> "PortSingleB(" ^ (string_of_bool b) ^ ")"
 | PortUSingleB -> "PortUSingleB"
-| PortStrictB -> "PortStrictB"
-| PortUnstrB -> "PortUnstrB"
+| PortStrictB b -> "PortStrictB(" ^ (string_of_bool b) ^ ")"
+| PortUnstrB b -> "PortUnstrB(" ^ (string_of_bool b) ^ ")"
 | PortCompare -> "PortCompare"
 | PortOperInput x -> "PortOperInput(" ^ (string_of_int x) ^ ")"
 | PortSeqNo (i,s,_) -> "PortSeqNo(" ^ (string_of_int i) ^ ":" ^ s ^ ")"
@@ -589,10 +594,10 @@ let portdesc pn =
 | PortTrue vt	-> { defdesc with inputkind = vt; wirename = "T"; inputopts = PortOptSet.empty }
 | PortSingle vt	-> { defdesc with inputkind = vt }
 | PortMulti vt	-> { defdesc with inputkind = vt; inputnum = PortUnbounded; inputopts = PortOptSet.empty }
-| PortSingleB	-> { defdesc with inputkind = VBoolean; wirecolor = cdepcol; printbold = false; wirename = "C" }
+| PortSingleB b	-> { defdesc with inputkind = if b then VBoolean else VNaeloob; wirecolor = cdepcol; printbold = false; wirename = "C" }
 | PortUSingleB	-> { defdesc with inputkind = VBoolean; wirecolor = cdepcol; printbold = false; wirename = "C"; inputopts = PortOptSet.empty }
-| PortStrictB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; wirecolor = cdepcol; printbold = false }
-| PortUnstrB	-> { defdesc with inputkind = VBoolean; inputnum = PortUnbounded; inputopts = PortOptSet.empty; wirecolor = cdepcol; printbold = false }
+| PortStrictB b	-> { defdesc with inputkind = if b then VBoolean else VNaeloob; inputnum = PortUnbounded; wirecolor = cdepcol; printbold = false }
+| PortUnstrB b	-> { defdesc with inputkind = if b then VBoolean else VNaeloob; inputnum = PortUnbounded; inputopts = PortOptSet.empty; wirecolor = cdepcol; printbold = false }
 | PortCompare	-> { defdesc with inputkind = VAny; inputnum = PortUnbounded } (* was "PortBounded 2"*)
 | PortOperInput n  -> { defdesc with wirename = string_of_int n; inputkind = VAny }
 | PortSeqNo (i,s,vt) -> { defdesc with inputkind = vt; wirename = (string_of_int i) ^ ":" ^ s }
@@ -675,7 +680,7 @@ let nkInput vt inpname isUnique = {
   outputtype = vt;
   nodeintlbl = NNInput (inpname,vt,isUnique);
   nodelabel = (fun _ -> "Input" ^ (if isUnique then "(U)" else "") ^ " " ^ inpname);
-  nodecolor = (192,128,0);
+  nodecolor = (255,255,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -690,7 +695,7 @@ let nkInputExists tblname = {
   outputtype = VBoolean;
   nodeintlbl = NNInputExists tblname;
   nodelabel = (fun _ -> "Exists: " ^ tblname);
-  nodecolor = (192,128,0);
+  nodecolor = (255,255,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -705,7 +710,7 @@ let nkTakeDim enteridx cval = {
   outputtype = cval;
   nodeintlbl = NNTakeDim enteridx;
   nodelabel = (fun _ -> ("TakeDim " ^ enteridx));
-  nodecolor = (192,128,0);
+  nodecolor = (255,255,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -716,7 +721,7 @@ let nkOutput cval inpdesc = {
   inadvview = true;
   isinputnode = false;
   nofail = false;
-  ports = PortSet.from_list [PortSingleB; PortSingle cval];
+  ports = PortSet.from_list [PortSingleB true; PortSingle cval];
   outputtype = NoValue;
   nodeintlbl = NNOutput inpdesc;
   nodelabel = (fun _ -> "Out[" ^ (String.concat ", " (RLSet.elements inpdesc)) ^ "]");
@@ -735,7 +740,7 @@ let nkOperation i vt opname = {
   outputtype = vt;
   nodeintlbl = NNOperation opname;
   nodelabel = (fun _ -> "OP:" ^ (string_of_opname opname));
-  nodecolor = (192,128,0);
+  nodecolor = (128,192,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -750,7 +755,7 @@ let nkAddrGen place dimnum inpnum = {
   outputtype = VInteger;
   nodeintlbl = NNAddrGen (place, dimnum, inpnum);
   nodelabel = (fun _ -> "Addr" ^ (NewName.to_string place) ^ "(" ^ (string_of_int dimnum) ^ ")");
-  nodecolor = (192,128,0);
+  nodecolor = (128,128,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -761,11 +766,11 @@ let nkTimePoint place inpnum = {
   inadvview = false;
   isinputnode = false;
   nofail = true;
-  ports = PortSet.add (PortSingle VInteger) (PortSet.from_list (List.map (fun k -> PortOperInput k) (intfromto 1 inpnum)));
-  outputtype = VInteger;
+  ports = PortSet.add (PortSingle VTimePoint) (PortSet.from_list (List.map (fun k -> PortOperInput k) (intfromto 1 inpnum)));
+  outputtype = VTimePoint;
   nodeintlbl = NNTimePoint (place, inpnum);
   nodelabel = (fun _ -> "TP_" ^ place);
-  nodecolor = (192,128,0);
+  nodecolor = (128,128,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -780,7 +785,7 @@ let nkTuple svtl = {
 	outputtype = VTuple svtl;
 	nodeintlbl = NNTuple svtl;
 	nodelabel = (fun _ -> "[" ^ (string_of_list id (intersperse (List.map fst svtl) ",")) ^ "]");
-    nodecolor = (192,128,0);
+    nodecolor = (128,192,255);
     nodetextcolor = (0,0,0);
     boldborder = true;
 };;
@@ -795,7 +800,7 @@ let nkProj i svtl = {
 	outputtype = snd (List.nth svtl (i-1));
 	nodeintlbl = NNProj (i,svtl);
 	nodelabel = (fun _ -> "Proj " ^ (string_of_int i));
-    nodecolor = (192,128,0);
+    nodecolor = (128,192,255);
     nodetextcolor = (0,0,0);
     boldborder = true;
 };;
@@ -810,7 +815,22 @@ let nkError = {
   outputtype = VAny;
   nodeintlbl = NNError;
   nodelabel = (fun _ -> "Error");
-  nodecolor = (192,128,0);
+  nodecolor = (255,255,255);
+  nodetextcolor = (0,0,0);
+  boldborder = true;
+};;
+
+let nkZeroTimePoint = {
+  contracts = false;
+  makesbottom = false;
+  inadvview = false;
+  isinputnode = false;
+  nofail = false;
+  ports = PortSet.empty;
+  outputtype = VTimePoint;
+  nodeintlbl = NNZeroTimePoint;
+  nodelabel = (fun _ -> "0L");
+  nodecolor = (255,255,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -825,7 +845,7 @@ let nkId vtype = {
   outputtype = vtype;
   nodeintlbl = NNId;
   nodelabel = (fun _ -> "Id");
-  nodecolor = (192,128,0);
+  nodecolor = (128,192,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -840,7 +860,7 @@ let nkGeneric name isGuard argc = {
   outputtype = if isGuard then VBoolean else VAny;
   nodeintlbl = NNGeneric (name, argc);
   nodelabel = (fun _ -> name);
-  nodecolor = (192,128,0);
+  nodecolor = (128,192,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -855,7 +875,7 @@ let nkMaximum vtype = {
   outputtype = vtype;
   nodeintlbl = NNMaximum;
   nodelabel = (fun _ -> "MAX");
-  nodecolor = (192,128,0);
+  nodecolor = (128,128,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -870,7 +890,7 @@ let nkSum vtype = {
   outputtype = vtype;
   nodeintlbl = NNSum;
   nodelabel = (fun _ -> "+");
-  nodecolor = (192,128,0);
+  nodecolor = (128,192,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -885,22 +905,7 @@ let nkMerge vtype = {
   outputtype = vtype;
   nodeintlbl = NNMerge vtype;
   nodelabel = (fun _ -> "Merge");
-  nodecolor = (192,128,0);
-  nodetextcolor = (0,0,0);
-  boldborder = true;
-};;
-
-let nkUpdCombine name vtype = {
-  contracts = false;
-  makesbottom = false;
-  inadvview = false;
-  isinputnode = false;
-  nofail = true;
-  ports = PortSet.from_list [PortMulti (VTuple [("idx", VInteger); ("data", vtype)]); PortSingle vtype];
-  outputtype = vtype;
-  nodeintlbl = NNUpdCombine name;
-  nodelabel = (fun _ -> "Combine(" ^ name ^ ")");
-  nodecolor = (192,128,0);
+  nodecolor = (255,255,0);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -915,7 +920,7 @@ let nkEqualDims vtype dl = {
   outputtype = vtype;
   nodeintlbl = NNEqualDims dl;
   nodelabel = (fun _ -> "EqualDims " ^ (String.concat ", " (List.map (fun (x,y) -> (string_of_int x) ^ "=" ^ (string_of_int y)) dl ) ) );
-  nodecolor = (192,128,0);
+  nodecolor = (255,128,0);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
@@ -926,22 +931,32 @@ let nkITE vtype = {
   inadvview = false;
   isinputnode = false;
   nofail = true;
-  ports = PortSet.from_list [PortTrue vtype; PortFalse vtype; PortSingleB];
+  ports = PortSet.from_list [PortTrue vtype; PortFalse vtype; PortSingleB true];
   outputtype = vtype;
   nodeintlbl = NNITE vtype;
   nodelabel = (fun _ -> "if-then-else");
-  nodecolor = (192,128,0);
+  nodecolor = (128,192,255);
   nodetextcolor = (0,0,0);
   boldborder = true;
 };;
 
 let nkAnd = {
   (nkId VBoolean) with
-  ports = PortSet.singleton PortStrictB;
+  ports = PortSet.singleton (PortStrictB true);
   outputtype = VBoolean;
-  nodeintlbl = NNAnd;
+  nodeintlbl = NNAnd true;
   nodelabel = (fun _ -> "and");
-  nodecolor = (200,0,0);
+  nodecolor = (0,255,0);
+  boldborder = false;
+};;
+
+let nkAndDT = {
+  (nkId VNaeloob) with
+  ports = PortSet.singleton (PortUnstrB false);
+  outputtype = VNaeloob;
+  nodeintlbl = NNAnd false;
+  nodelabel = (fun _ -> "and");
+  nodecolor = (255,0,0);
   boldborder = false;
 };;
 
@@ -952,41 +967,59 @@ let nkLongMerge vtype = {
   outputtype = vtype;
   nodeintlbl = NNLongMerge vtype;
   nodelabel = (fun _ -> "Merge(L)");
-  nodecolor = (100,255,100);
-};;
-
-let nkLongUpdCombine name vtype = {
-  (nkId vtype) with
-  contracts = true;
-  ports = PortSet.singleton (PortSingle (VTuple [("idx", VInteger); ("data", vtype)]));
-  outputtype = VTuple [("idx", VInteger); ("data", vtype)];
-  nodeintlbl = NNLongUpdCombine name;
-  nodelabel = (fun _ -> "Combine(L; " ^ name ^ ")");
-  nodecolor = (100,255,100);
+  nodecolor = (255,255,0);
 };;
 
 let nkOr = {
   nkAnd with
-  ports = PortSet.singleton PortUnstrB;
-  nodeintlbl = NNOr;
+  ports = PortSet.singleton (PortUnstrB true);
+  nodeintlbl = NNOr true;
   nodelabel = (fun _ -> "or");
-  nodecolor = (0,200,0);
+  nodecolor = (0,255,0);
+};;
+
+let nkOrDT = {
+  nkAndDT with
+  ports = PortSet.singleton (PortStrictB false);
+  nodeintlbl = NNOr false;
+  nodelabel = (fun _ -> "or");
+  nodecolor = (255,0,0);
 };;
 
 let nkNot = {
   nkOr with
   ports = PortSet.singleton PortUSingleB;
   nodeintlbl = NNNot;
+  nodelabel = (fun _ -> "NOT");
+  nodecolor = (255,255,0);
+};;
+
+let nkNotFlip b = {
+  nkOr with
+  ports = PortSet.singleton (PortSingleB (not b));
+  nodeintlbl = NNNotFlip b;
+  outputtype = if b then VBoolean else VNaeloob;
   nodelabel = (fun _ -> "not");
-  nodecolor = (0,200,0);
+  nodecolor = if b then (0,255,0) else (255,0,0);
 };;
 
 let nkTrue = {
   nkAnd with
   ports = PortSet.empty;
-  nodeintlbl = NNTrue;
+  nodeintlbl = NNTrue true;
   nodelabel = (fun _ -> "true");
   nodecolor = (255,255,255);
+};;
+
+let nkTrueDT = {
+  nkAndDT with
+  makesbottom = true;
+  nofail = false;
+  ports = PortSet.empty;
+  nodeintlbl = NNTrue false;
+  nodelabel = (fun _ -> "true");
+  nodecolor = (0,0,0);
+  nodetextcolor = (255,255,255);
 };;
 
 let nkDimEq = {nkTrue with nodeintlbl = NNDimEq; nodelabel = (fun _ -> "DimEq")};;
@@ -996,19 +1029,28 @@ let nkFalse = {
   makesbottom = true;
   nofail = false;
   ports = PortSet.empty;
-  nodeintlbl = NNFalse;
+  nodeintlbl = NNFalse true;
   nodelabel = (fun _ -> "false");
   nodecolor = (255,255,255);
+};;
+
+let nkFalseDT = {
+	nkTrue with
+	nodeintlbl = NNFalse true;
+	outputtype = VNaeloob;
+	nodelabel = (fun _ -> "false");
+	nodecolor = (0,0,0);
+	nodetextcolor = (255,255,255);
 };;
 
 let nkFilter t = {
   (nkId t) with
   nofail = false;
-  ports = PortSet.from_list [PortSingleB; PortSingle t];
+  ports = PortSet.from_list [PortSingleB true; PortSingle t];
   outputtype = t;
   nodeintlbl = NNFilter t;
   nodelabel = (fun _ -> (string_of_valuetype t) ^ " filter");
-  nodecolor = (192,128,220);
+  nodecolor = (128,128,255);
   boldborder = false;
 };;
 
@@ -1020,13 +1062,46 @@ let nkIsEq = {
   nodelabel = (fun _ -> "=?");
 };;
 
+let nkIsNEq = {
+  nkIsEq with
+  nodeintlbl = NNIsNEq;
+  nodelabel = (fun _ -> "!=?");
+};;
+
 let nkLongOr = {
   nkAnd with
   contracts = true;
-  ports = PortSet.singleton PortSingleB;
-  nodeintlbl = NNLongOr;
+  ports = PortSet.singleton (PortSingleB true);
+  nodeintlbl = NNLongOr true;
   nodelabel = (fun _ -> "ooor");
-  nodecolor = (100,255,100);
+  nodecolor = (0,255,0);
+};;
+
+let nkLongOrDT = {
+  nkAndDT with
+  contracts = true;
+  ports = PortSet.singleton (PortSingleB false);
+  nodeintlbl = NNLongOr false;
+  nodelabel = (fun _ -> "ooor");
+  nodecolor = (255,0,0);
+};;
+
+let nkLongAnd = {
+  nkAnd with
+  contracts = true;
+  ports = PortSet.singleton (PortSingleB true);
+  nodeintlbl = NNLongAnd true;
+  nodelabel = (fun _ -> "aaand");
+  nodecolor = (0,255,0);
+};;
+
+let nkLongAndDT = {
+  nkAndDT with
+  contracts = true;
+  ports = PortSet.singleton (PortSingleB false);
+  nodeintlbl = NNLongAnd false;
+  nodelabel = (fun _ -> "aaand");
+  nodecolor = (255,0,0);
 };;
 
 let nkMakeBag dims vt = {
@@ -1383,6 +1458,15 @@ struct
       addnode n'
     ) gr empty
 *)
+
+let edges_to_port gr nodeid prt =
+	let n = findnode nodeid gr
+	in
+	nodefoldedges (fun ((_,eid),_,prt') s ->
+		if prt = prt' then IdtSet.add eid s else s
+	) n IdtSet.empty
+;;
+
 end :
 sig
   type t
@@ -1402,6 +1486,7 @@ sig
   val remedge : NewName.idtype -> t -> t
   val addedge : (connectiontype * NewName.idtype * portname) -> t -> t
   val addedge_withid : (connectiontype * NewName.idtype * portname) -> t -> (t * NewName.idtype)
+  val edges_to_port : t -> NewName.idtype -> portname -> IdtSet.t
   (*val idsToNew : t -> t*)
 end);;
 
