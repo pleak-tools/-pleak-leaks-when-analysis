@@ -1074,7 +1074,7 @@ let removeRedundantMaxEdges_alternate dg0 =
 				) n0 ();
 				output_string oc "(check-sat)\n";
 				flush oc;
-				let answer = input_line ic
+				let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 				in
 				output_string oc "(pop)\n";
 				if answer = "unknown" then
@@ -1159,7 +1159,7 @@ let removeRedundantEdgesWithZ3_alternate dg0 =
 						print_endline "Calling check-sat";
 						output_string oc "(check-sat)\n";
 						flush oc;
-						let answer = input_line ic
+						let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 						in
 						print_endline "Received answer";
 						(if answer = "unknown" then
@@ -1269,7 +1269,7 @@ let removeRedundantMaxEdges dg0 =
 							print_endline "Calling check-sat";
 							writeBothChans tc oc "(check-sat)\n";
 							flush oc;
-							let answer = input_line ic
+							let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 							in
 							print_endline "Received answer";
 							(if answer = "unknown" then
@@ -1322,7 +1322,7 @@ let removeRedundantMaxEdges dg0 =
 					print_endline "Calling check-sat for always false";
 					writeBothChans oc tc "(check-sat)\n";
 					flush oc;
-					let answer = input_line ic
+					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 					in
 					print_endline "Received answer";
 					output_string tc ("Answer is " ^ answer ^ "\n");
@@ -1343,7 +1343,7 @@ let removeRedundantMaxEdges dg0 =
 					print_endline "Calling check-sat for always true";
 					writeBothChans oc tc "(check-sat)\n";
 					flush oc;
-					let answer = input_line ic
+					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 					in
 					print_endline "Received answer";
 					output_string tc ("Answer is " ^ answer ^ "\n");
@@ -1440,7 +1440,7 @@ let removeRedundantEdgesWithZ3 dg0 =
 						print_endline "Calling check-sat";
 						writeBothChans tc oc "(check-sat)\n";
 						flush oc;
-						let answer = input_line ic
+						let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 						in
 						print_endline "Received answer";
 						(if answer = "unknown" then
@@ -1571,12 +1571,15 @@ let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks 
 	output_string oc "(pop)\n";
 	match possIc with
 		| Some ic -> (
-			let answer = input_line ic
+			let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 			in
-			if answer = "unknown" then
+			(if answer = "unknown" then
 			begin
 				print_endline ("Received an \"unknown\"")
-			end;
+			end else
+			begin
+				print_endline ("Answer is \"" ^ answer ^ "\"")
+			end);
 			answer = "unsat"
 		)
 		| None -> false
@@ -1635,19 +1638,36 @@ let checkFlows dg possFName =
 		let answersForInpNode = RLMap.fold (fun outpName outpIds m2 ->
 			(* TODO: https://en.wikipedia.org/wiki/Group_testing is related to the thing we are trying to do below. We are trying to learn a monotone boolean function. Its atoms are not necessarily singleton sets, though *)
 			(* See e.g. Boris Kovalerchuk, Evangelos Triantaphyllou, Aniruddha S. Deshpande, Evgenii Vityaev. Interactive Learning of Monotone Boolean Functions. Information Sciences 94, pp. 87-118, 1996 *)
-			let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
-			and withAll = ref false
-			and withNone = ref false
-			in
-			IdtSet.subsetiter (fun someFilters ->
-				IdtSet.subsetiter (fun someChecks ->
-					if answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.diff allFilterNodes someFilters) (IdtSet.diff allCheckNodes someChecks) then begin
-						(if (IdtSet.is_empty someFilters) && (IdtSet.is_empty someChecks) then withAll := true);
-						(if (IdtSet.equal someFilters allFilterNodes) && (IdtSet.equal someChecks allCheckNodes) then withNone := true)
-					end else allResults := (someFilters, someChecks) :: !allResults
-				) allCheckNodes
-			) allFilterNodes;
-			RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
+			if (IdtSet.is_empty allFilterNodes) && (IdtSet.is_empty allCheckNodes) then
+			begin
+				let dg' = DG.foldnodes (fun n dgcurr ->
+					match n.nkind.nodeintlbl with
+					| NNOutput _ -> if IdtSet.mem n.id outpIds then dgcurr else DG.remnode n.id dgcurr
+					| _ -> dgcurr
+				) dg dg
+				in
+				let dg'' = GrbOptimize.removeDead dg'
+				in
+				let res = not (DG.hasnode inpNodeId dg'')
+				in
+				RLMap.add outpName (res, res, []) m2
+			end
+			else
+			begin
+				let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
+				and withAll = ref false
+				and withNone = ref false
+				in
+				IdtSet.subsetiter (fun someFilters ->
+					IdtSet.subsetiter (fun someChecks ->
+						if answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.diff allFilterNodes someFilters) (IdtSet.diff allCheckNodes someChecks) then begin
+							(if (IdtSet.is_empty someFilters) && (IdtSet.is_empty someChecks) then withAll := true);
+							(if (IdtSet.equal someFilters allFilterNodes) && (IdtSet.equal someChecks allCheckNodes) then withNone := true)
+						end else allResults := (someFilters, someChecks) :: !allResults
+					) allCheckNodes
+				) allFilterNodes;
+				RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
+			end
 		) outputNames RLMap.empty
 		in
 		IdtMap.add inpNodeId answersForInpNode m1
