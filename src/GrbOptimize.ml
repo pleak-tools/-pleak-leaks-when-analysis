@@ -3635,7 +3635,7 @@ module IntDblArrayMap = MyMap(IntDblArrayOrdered);;
 let simplifyMergeSources dg =
 	let currdg = ref dg
 	in
-	let arrayToIPS a = IntPairSet.of_list (Array.to_list (Array.mapi (fun idx x -> (idx,x)) a))
+	let arrayToIPS a = IntPairSet.of_list (Array.to_list (Array.mapi (fun idx x ->  (idx,x) (* (x,idx) *)  ) a))
 	and ipsToIntMap s = IntPairSet.fold (fun (x,y) m -> IntMap.add x y m) s IntMap.empty
 	and ipsToIntMapRev s = IntPairSet.fold (fun (y,x) m -> IntMap.add x y m) s IntMap.empty
 	in
@@ -3690,10 +3690,16 @@ let simplifyMergeSources dg =
 			!res
 		in
 		IntPairSet.fold (fun (dx,dy) ips ->
-			let ddy = backmap.(dy)
+(*			let ddy = backmap.(dy)
 			in
 			try
 				IntPairSet.add (dx, IntMap.find ddy invfwdmap) ips
+			with Not_found -> ips
+*)
+			let ddx = backmap.(dx)
+			in
+			try
+				IntPairSet.add (IntMap.find ddx invfwdmap, dy) ips
 			with Not_found -> ips
 		) oldjointdims IntPairSet.empty
 	in
