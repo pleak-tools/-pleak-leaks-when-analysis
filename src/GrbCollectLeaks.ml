@@ -1444,6 +1444,7 @@ let output_ewr_to_graph oc ewr =
 	let ewridtbl = Hashtbl.create 10
 	and rowidtbl = Hashtbl.create 10
 	and nidprivtbl = Hashtbl.create 10
+	and nidredtbl = Hashtbl.create 10
 	in
 	let getRowId rid =
 		try
@@ -1515,7 +1516,7 @@ let output_ewr_to_graph oc ewr =
 		(begin
 			match ewr with
 			| EWRInput (attrname, tblid) -> raise (Failure "doOutputEWR with EWRInput: we should never come to this place")
-			| EWRExists _ -> Hashtbl.add nidprivtbl nid false
+			| EWRExists _ -> (Hashtbl.add nidprivtbl nid false; Hashtbl.add nidredtbl nid false)
 			| EWRCompute (_, ll)
 			| EWRComputeGen (_, ll) ->
 				let upl = List.map doOutputEWR ll
@@ -1525,7 +1526,7 @@ let output_ewr_to_graph oc ewr =
 				let nidispriv =
 					let res = List.fold_right (||) uplpriv false
 					in
-					Hashtbl.add nidprivtbl nid res; res
+					Hashtbl.add nidprivtbl nid res; Hashtbl.add nidredtbl nid false; res
 				in
 				let nodelbl, numberinps = ( match ewr with | EWRCompute (opname, _) -> (match opname with
 					| OPPlus -> "+", false
@@ -1557,7 +1558,7 @@ let output_ewr_to_graph oc ewr =
 				)
 				in
 				(
-					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
 					List.iteri (fun ifx upid ->
 						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid));
 						let upidpriv = Hashtbl.find nidprivtbl upid
@@ -1566,7 +1567,7 @@ let output_ewr_to_graph oc ewr =
 						begin
 							output_string oc " [";
 							(if numberinps then output_string oc ("label=" ^ (string_of_int (ifx+1)) ^ " "));
-							(if upidpriv then output_string oc "style=bold color=red");
+							(if upidpriv then output_string oc "style=bold color=orange");
 							output_string oc "]"
 						end;
 						output_string oc ";\n"
@@ -1588,12 +1589,13 @@ let output_ewr_to_graph oc ewr =
 				in
 				(
 					Hashtbl.add nidprivtbl nid nidispriv;
-					output_string oc ((dotnodeid gbid) ^ " [shape=box style=" ^ (if gbidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"GROUP BY\" fillcolor=white];\n");
-					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
-					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ (if gbidispriv then "[style=bold color=red]" else "") ^ ";\n");
-					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl insideid then " [style=bold color=red]" else "") ^ ";\n");
+					Hashtbl.add nidredtbl nid false;
+					output_string oc ((dotnodeid gbid) ^ " [shape=box style=" ^ (if gbidispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"GROUP BY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ (if gbidispriv then "[style=bold color=orange]" else "") ^ ";\n");
+					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl insideid then " [style=bold color=orange]" else "") ^ ";\n");
 					List.iter (fun upid ->
-						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid gbid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n")
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid gbid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=orange]" else "") ^ ";\n")
 					) groupids
 				)
 			| EWRSeqNo (stridl, upewr) ->
@@ -1608,12 +1610,13 @@ let output_ewr_to_graph oc ewr =
 				in
 				(
 					Hashtbl.add nidprivtbl nid nidispriv;
-					output_string oc ((dotnodeid keyid) ^ " [shape=box style=" ^ (if keyispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"KEY\" fillcolor=white];\n");
-					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"SeqNo\" fillcolor=white];\n");
-					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ (if keyispriv then " [style=bold color=red]" else "") ^ ";\n");
-					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if upispriv then " [style=bold color=red]" else "") ^ ";\n");
+					Hashtbl.add nidredtbl nid false;
+					output_string oc ((dotnodeid keyid) ^ " [shape=box style=" ^ (if keyispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"KEY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"SeqNo\" fillcolor=white];\n");
+					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ (if keyispriv then " [style=bold color=orange]" else "") ^ ";\n");
+					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if upispriv then " [style=bold color=orange]" else "") ^ ";\n");
 					List.iteri (fun idx gid ->
-						output_string oc ((dotnodeid gid) ^ " -> " ^ (dotnodeid keyid) ^ " [label=" ^ (string_of_int (idx+1)) ^ (if Hashtbl.find nidprivtbl gid then " style=bold color=red" else "") ^ "];\n")
+						output_string oc ((dotnodeid gid) ^ " -> " ^ (dotnodeid keyid) ^ " [label=" ^ (string_of_int (idx+1)) ^ (if Hashtbl.find nidprivtbl gid then " style=bold color=orange" else "") ^ "];\n")
 					) groupids
 				)
 		end;
@@ -1627,9 +1630,10 @@ let output_ewr_to_graph oc ewr =
 			and nidispriv = List.fold_right (||) (List.map (Hashtbl.find nidprivtbl) upl) false
 			in
 			Hashtbl.add nidprivtbl nid nidispriv;
-			output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
+			Hashtbl.add nidredtbl nid false;
+			output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=orange" else "filled") ^ " label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
 			List.iter (fun upid ->
-				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n");
+				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=orange]" else "") ^ ";\n");
 			) upl;
 			nid
 	and doOutputStruct ewstr atBeginning =
@@ -1660,9 +1664,10 @@ let output_ewr_to_graph oc ewr =
 		let nidispriv = resispriv || condispriv
 		in
 		Hashtbl.add nidprivtbl nid nidispriv;
-		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue" else "white") ^ "];\n");
-		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1" ^ (if resispriv then " style=bold color=red" else "") ^ "];\n");
-		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2" ^ (if condispriv then " style=bold color=red" else "") ^ "];\n");
+		Hashtbl.add nidredtbl nid false;
+		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=" ^ (if (Hashtbl.find nidredtbl resid) || (Hashtbl.find nidredtbl condid) then "red" else "orange") else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue" else "white") ^ "];\n");
+		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1" ^ (if resispriv then " style=bold color=" ^ (if Hashtbl.find nidredtbl resid then "red" else "orange") else "") ^ "];\n");
+		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2" ^ (if condispriv then " style=bold color=" ^ (if Hashtbl.find nidredtbl condid then "red" else "orange") else "") ^ "];\n");
 		(if (not atBeginning) then
 		begin
 			output_string oc ("}\n")
@@ -1681,6 +1686,7 @@ let output_ewr_to_graph oc ewr =
 					let nidispriv = isAttrPrivate tbln attrname
 					in
 					Hashtbl.add nidprivtbl nid nidispriv;
+					Hashtbl.add nidredtbl nid nidispriv;
 					output_string oc ("  " ^ (dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ attrname ^ "\" fillcolor=white];\n")
 				) attrset;
 			output_string oc "}\n";
