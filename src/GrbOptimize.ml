@@ -3690,17 +3690,18 @@ let simplifyMergeSources dg =
 			!res
 		in
 		IntPairSet.fold (fun (dx,dy) ips ->
-(*			let ddy = backmap.(dy)
+			let ddy = backmap.(dy)
 			in
 			try
 				IntPairSet.add (dx, IntMap.find ddy invfwdmap) ips
 			with Not_found -> ips
-*)
-			let ddx = backmap.(dx)
+
+(*			let ddx = backmap.(dx)
 			in
 			try
 				IntPairSet.add (IntMap.find ddx invfwdmap, dy) ips
 			with Not_found -> ips
+*)
 		) oldjointdims IntPairSet.empty
 	in
 	let ixmapOverBackmap (AITT dataixt) oldjointdims (AITT oldmergeixt) (AITT newmergeixt) backmap fwdmap =

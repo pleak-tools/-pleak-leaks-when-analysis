@@ -1617,7 +1617,8 @@ let checkFlows dg possFName =
 	and allFilterNodes = DG.foldnodes (fun n ss ->
 		let d = n.nkind.nodelabel n.ixtypemap
 		in
-		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then IdtSet.add n.id ss else ss
+		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then IdtSet.add n.id ss else 
+		if ((String.length d) >= 4) && ((String.sub d 0 4) = "hash") then IdtSet.add n.id ss else ss
 	) dg IdtSet.empty
 	in
 	let outputNames = IdtSet.fold (fun nid mm ->
@@ -1638,19 +1639,33 @@ let checkFlows dg possFName =
 		let answersForInpNode = RLMap.fold (fun outpName outpIds m2 ->
 			(* TODO: https://en.wikipedia.org/wiki/Group_testing is related to the thing we are trying to do below. We are trying to learn a monotone boolean function. Its atoms are not necessarily singleton sets, though *)
 			(* See e.g. Boris Kovalerchuk, Evangelos Triantaphyllou, Aniruddha S. Deshpande, Evgenii Vityaev. Interactive Learning of Monotone Boolean Functions. Information Sciences 94, pp. 87-118, 1996 *)
-			if (IdtSet.is_empty allFilterNodes) && (IdtSet.is_empty allCheckNodes) then
+			if (* (IdtSet.is_empty allFilterNodes) && *) (IdtSet.is_empty allCheckNodes) then
 			begin
-				let dg' = DG.foldnodes (fun n dgcurr ->
-					match n.nkind.nodeintlbl with
-					| NNOutput _ -> if IdtSet.mem n.id outpIds then dgcurr else DG.remnode n.id dgcurr
-					| _ -> dgcurr
-				) dg dg
+				let allResults = ref []
+				and withAll = ref false
+				and withNone = ref false
+				and string_of_idtset s = "{" ^ (String.concat ", " (List.map NewName.to_string (IdtSet.elements s))) ^ "}"
 				in
-				let dg'' = GrbOptimize.removeDead dg'
-				in
-				let res = not (DG.hasnode inpNodeId dg'')
-				in
-				RLMap.add outpName (res, res, []) m2
+				IdtSet.subsetiter (fun someFilters ->
+					print_string ("FlowCheck: input: " ^ (NewName.to_string inpNodeId) ^ ", outputs: " ^ (string_of_idtset outpIds) ^ ", filters: " ^ (string_of_idtset someFilters) ^ ", result: ");
+					let dg' = DG.foldnodes (fun n dgcurr ->
+						match n.nkind.nodeintlbl with
+						| NNOutput _ -> if IdtSet.mem n.id outpIds then dgcurr else DG.remnode n.id dgcurr
+						| _ -> if IdtSet.mem n.id someFilters then dgcurr else if IdtSet.mem n.id allFilterNodes then DG.remnode n.id dgcurr else dgcurr
+					) dg dg
+					in
+					let dg'' = GrbOptimize.removeDead dg'
+					in
+					let res = not (DG.hasnode inpNodeId dg'')
+					in
+					if res then
+					begin
+						(if IdtSet.is_empty someFilters then withAll := true);
+						(if IdtSet.equal someFilters allFilterNodes then withNone := true);
+						print_endline "true"
+					end else (allResults := (someFilters, IdtSet.empty) :: !allResults; print_endline "false")
+				) allFilterNodes;
+				RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
 			end
 			else
 			begin
