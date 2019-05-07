@@ -1647,7 +1647,7 @@ let output_ewr_to_graph oc ewr =
 		begin
 			let thrid = NewName.get ()
 			in
-			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=cyan\n\n")
+			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=turquoise\n\n")
 		end);
 		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s (IdtMap.find k existAttrs)) ewstr.outputrows
 		in
@@ -1665,7 +1665,7 @@ let output_ewr_to_graph oc ewr =
 		in
 		Hashtbl.add nidprivtbl nid nidispriv;
 		Hashtbl.add nidredtbl nid false;
-		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=" ^ (if (Hashtbl.find nidredtbl resid) || (Hashtbl.find nidredtbl condid) then "red" else "orange") else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue" else "white") ^ "];\n");
+		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=" ^ (if (Hashtbl.find nidredtbl resid) || (Hashtbl.find nidredtbl condid) then "red" else "orange") else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "skyblue" else "white") ^ "];\n");
 		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1" ^ (if resispriv then " style=bold color=" ^ (if Hashtbl.find nidredtbl resid then "red" else "orange") else "") ^ "];\n");
 		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2" ^ (if condispriv then " style=bold color=" ^ (if Hashtbl.find nidredtbl condid then "red" else "orange") else "") ^ "];\n");
 		(if (not atBeginning) then
@@ -1679,7 +1679,7 @@ let output_ewr_to_graph oc ewr =
 		if alreadyIn then oid
 		else
 		begin
-			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^";\n");
+			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "khaki" else "green") ^";\n");
 				RLSet.iter (fun attrname ->
 					let (nid,_) = getEWRId (EWRInput (attrname, rid))
 					in
@@ -1911,7 +1911,7 @@ let output_ewr_to_graph_without_deps oc ewr =
 		begin
 			let thrid = NewName.get ()
 			in
-			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=cyan\n\n")
+			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=turquoise\n\n")
 		end);
 		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s (IdtMap.find k existAttrs)) ewstr.outputrows
 		in
@@ -1922,7 +1922,7 @@ let output_ewr_to_graph_without_deps oc ewr =
 		in
 		let nid = NewName.get ()
 		in
-		output_string oc ((dotnodeid nid) ^ "[shape=box label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue style=filled" else "white style=filled") ^ "];\n");
+		output_string oc ((dotnodeid nid) ^ "[shape=box label=\"Filter\" fillcolor=" ^ (if atBeginning then "skyblue style=filled" else "white style=filled") ^ "];\n");
 		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1];\n");
 		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2];\n");
 		(if (not atBeginning) then
@@ -1936,7 +1936,7 @@ let output_ewr_to_graph_without_deps oc ewr =
 		if alreadyIn then oid
 		else
 		begin
-			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^";\n");
+			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "khaki" else "green") ^";\n");
 				RLSet.iter (fun attrname ->
 					let (nid,_) = getEWRId (EWRInput (attrname, rid))
 					in
