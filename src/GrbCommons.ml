@@ -8,6 +8,8 @@ let eithercomp leftcomp rightcomp a b =
   | Right _, Left _ -> 1
   | Right x, Right y -> rightcomp x y;;
 
+let listmapmaybe f l = List.map (function Some x -> x) (List.filter (function None -> false | Some _ -> true) (List.map f l));;
+
 let const k x = k;;
 
 let id x = x;;

@@ -1,9 +1,15 @@
 open GrbGraphs;;
 open GrbCommons;;
 
-let dimmapToStrWithPref vpref bm = String.concat " " (Array.to_list (Array.map (fun idx -> vpref ^ (string_of_int idx)) bm));;
+let dimmapToStrWithFun f bm = String.concat " " (Array.to_list (Array.map f bm));;
+
+let dimmapToStrWithPref vpref = dimmapToStrWithFun (fun idx -> vpref ^ (string_of_int idx));;
+
+let selIdAndArgsToStrWithFun npref f nid bm = if Array.length bm > 0 then "(" ^ npref ^ (NewName.to_string nid) ^ " " ^ (dimmapToStrWithFun f bm) ^ ")" else npref ^ (NewName.to_string nid);;
 
 let selIdAndArgsToStrWithPref npref vpref nid bm = if Array.length bm > 0 then "(" ^ npref ^ (NewName.to_string nid) ^ " " ^ (dimmapToStrWithPref vpref bm) ^ ")" else npref ^ (NewName.to_string nid);;
+
+let idAndArgsToStrWithFun f nid bm = selIdAndArgsToStrWithFun "n" f nid bm;;
 
 let idAndArgsToStrWithPref vpref nid bm = selIdAndArgsToStrWithPref "n" vpref nid bm;;
 
@@ -26,7 +32,7 @@ let writeItAllToZ3 dg oc =
 				| NNLongMerge _
 				| NNMerge _ ->
 					DG.nodefoldedges (fun ((IxM cc,_), _, prt) bb ->
-						if bb then true else if prt = PortSingleB then false else
+						if bb then true else if (match prt with PortSingleB _ -> true | _ -> false) then false else
 						let Some (srcid,_,_) = cc.(0)
 						in IdtSet.mem srcid !dimPrLoc
 					) n false
@@ -54,7 +60,7 @@ let writeItAllToZ3 dg oc =
 		in
 		let nbinps = String.concat " " (Array.to_list (Array.map (fun _ -> "S") nb.(0)))
 		in
-		let vType = if IdtSet.mem n.id dimProducers then "S" else if n.nkind.outputtype = VBoolean then "Bool" else "Int"
+		let vType = if IdtSet.mem n.id dimProducers then "S" else if (n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob) then "Bool" else "Int"
 		in
 		output_string oc ("(declare-fun f" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") Bool)\n");
 		output_string oc ("(declare-fun v" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") " ^ vType ^ ")\n");
@@ -129,7 +135,7 @@ let writeItAllToZ3 dg oc =
 				DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
 					let Some (nprevid, _, backmap) = cc.(0)
 					in
-					if prt = PortSingleB then
+					if prt = PortSingleB true then
 					begin
 						backmappl1 := Some backmap;
 						previdpl1 := Some nprevid
@@ -206,12 +212,12 @@ let writeItAllToZ3 dg oc =
 		and output_forall_close () = if needsForAll then output_string oc ")" else ()
 		in
 		match n.nkind.nodeintlbl with
-		| NNAnd
-		| NNOr -> begin
+		| NNAnd _
+		| NNOr _ -> begin
 			output_string oc "(assert ";
 			output_forall_open ();
 			output_string oc "(= (";
-			output_string oc (match n.nkind.nodeintlbl with | NNAnd -> "and " | _ -> "or ");
+			output_string oc (match n.nkind.nodeintlbl with | NNAnd _ -> "and " | _ -> "or ");
 			DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
@@ -224,7 +230,7 @@ let writeItAllToZ3 dg oc =
 			output_forall_close ();
 			output_string oc ")\n"
 		end
-		| NNLongOr -> begin
+		| NNLongOr _ -> begin
 			let backmappl = ref None
 			and previdpl = ref None
 			in
@@ -335,7 +341,7 @@ let writeItAllToZ3 dg oc =
 			and previdpl = ref None
 			in
 			DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
-				if prt = PortSingleB then () else
+				if prt = PortSingleB true then () else
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
 				backmappl := Some backmap;
@@ -489,7 +495,7 @@ let writeItAllToZ3 dg oc =
 			DG.nodefoldedges (fun ((IxM cc,_), _, prt) () ->
 				let Some (nprevid, _, backmap) = cc.(0)
 				in
-				if prt = PortSingleB then
+				if prt = PortSingleB true then
 				begin
 					backmappli := Some backmap;
 					previdpli := Some nprevid
@@ -703,7 +709,7 @@ let writeOrderingToZ3 dg oc =
 	and idAndArgsToStr = idAndArgsToStrWithPref "x"
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.outputtype = VInteger then
+		if n.nkind.outputtype = VTimePoint then
 		begin
 			let (AITT nb) = n.outputindextype
 			in
@@ -715,11 +721,12 @@ let writeOrderingToZ3 dg oc =
 	let toBeConnected = function
 		| NNMaximum
 		| NNTimePoint _
-		| NNOperation (OPIntConst _) -> true
+		| NNZeroTimePoint
+		| NNOperation (OPTimePointConst _) -> true
 		| _ -> false
 	in
 	DG.foldnodes (fun n () ->
-		if (n.nkind.outputtype = VInteger) && (toBeConnected n.nkind.nodeintlbl) then
+		if (n.nkind.outputtype = VTimePoint) && (toBeConnected n.nkind.nodeintlbl) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (AITT nb) = n.outputindextype
@@ -777,7 +784,7 @@ let writeOrderingToZ3 dg oc =
 				end;
 				output_string oc "(< ";
 				DG.nodefoldedges (fun ((IxM cc,_),_,prt) () ->
-					if prt = (PortSingle VInteger) then
+					if prt = (PortSingle VTimePoint) then
 						let Some (srcid,_,backmap) = cc.(0)
 						in
 						output_string oc (idAndArgsToStr srcid backmap)
@@ -788,18 +795,36 @@ let writeOrderingToZ3 dg oc =
 				if needsForAll then begin output_string oc ")" end;
 				output_string oc ")\n"
 			end
-			| NNOperation (OPIntConst xx) ->
+			| NNZeroTimePoint ->
+				output_string oc ("(assert (= " ^ (idAndArgsToStr n.id fwdmap) ^ " 0))\n" )
+			| NNOperation (OPTimePointConst (Left xx)) | NNOperation (OPTimePointConst (Right xx)) ->
 				output_string oc ("(assert (= " ^ (idAndArgsToStr n.id fwdmap) ^ " " ^ (string_of_int xx) ^ "))\n" )
 		end
 	) dg ()
 ;;
 
-let writeBooleanDescToZ3 dg oc =
+let makeAddrFunAppl afarg aflst =
+	let rec wF afarg = function
+	| [] -> afarg
+	| (x::xs) -> wF ("(" ^ (match x with Left _ -> "af_" | Right _ -> "bf_") ^ (match x with Left (y,z) | Right (y,z) -> (NewName.to_string y) ^ "_" ^ (string_of_int z)) ^ " " ^ afarg ^ ")") xs
+	in
+	wF afarg (List.rev aflst)
+;;
+
+let writeBooleanDescToZ3 dg oc dimEqInformation =
 	let dimmapToStr = dimmapToStrWithPref "x"
 	and idAndArgsToStr = idAndArgsToStrWithPref "x"
+	and extractDimEqInformation nid = match dimEqInformation with
+		| None -> None
+		| Some foundDeps ->
+		try
+			let pp = Hashtbl.find foundDeps nid
+			in
+			Some pp
+		with Not_found -> None
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.outputtype = VBoolean then
+		if (n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob) then
 		begin
 			let (AITT nb) = n.outputindextype
 			in
@@ -808,36 +833,68 @@ let writeBooleanDescToZ3 dg oc =
 			output_string oc ("(declare-fun n" ^ (NewName.to_string n.id) ^ " (" ^ nbinps ^ ") Bool)\n")
 		end
 	) dg ();
+	(if (match dimEqInformation with Some _ -> true | None -> false) then
+	DG.foldnodes (fun n () ->
+		match n.nkind.nodeintlbl with
+			| NNAddrGen (x,y,z) when z=1 ->
+			begin
+				output_string oc ("(declare-fun af_" ^ (NewName.to_string x) ^ "_" ^ (string_of_int y) ^ " (S) S)\n");
+				output_string oc ("(declare-fun bf_" ^ (NewName.to_string x) ^ "_" ^ (string_of_int y) ^ " (S) S)\n");
+				output_string oc ("(assert (forall ((y S) (z S)) (= (= (af_" ^ (NewName.to_string x) ^ "_" ^ (string_of_int y) ^ " y) z) (= y (bf_" ^ (NewName.to_string x) ^ "_" ^ (string_of_int y) ^ " z)))))\n")
+			end
+			| _ -> ()
+	) dg () );
 	let toBeConnected = function
-		| NNAnd
+		| NNAnd _
 		| NNId
-		| NNOr
-		| NNLongOr
+		| NNOr _
+		| NNLongOr _
+		| NNLongAnd _
+		| NNNotFlip _
 		| NNNot -> true
 		| _ -> false
 	in
 	DG.foldnodes (fun n () ->
-		if (n.nkind.outputtype = VBoolean) && (toBeConnected n.nkind.nodeintlbl) then
+		if ((n.nkind.outputtype = VBoolean) || (n.nkind.outputtype = VNaeloob)) && (toBeConnected n.nkind.nodeintlbl) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (AITT nb) = n.outputindextype
 			and (IxM ncc) = n.ixtypemap
 			in
+			(match extractDimEqInformation n.id with
+				| None -> ()
+				| Some (_,outpEqs) ->
+					let qvarsNB = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " S)") nb.(0)))
+					and needsForAll = (Array.length nb.(0)) > 0
+					in
+					for leftDim = 0 to (Array.length nb.(0)) - 1 do for rightDim = 0 to (Array.length nb.(0)) - 1 do Hashtbl.iter (fun (lv,b) () ->
+						if (leftDim = rightDim) && (lv = []) then () else
+						begin
+							output_string oc ("(assert (forall (" ^ qvarsNB ^ ") (=> ");
+							(if not b then output_string oc "(not ");
+							output_string oc (idAndArgsToStr n.id (Array.init (Array.length nb.(0)) (fun i -> i)));
+							(if not b then output_string oc ")");
+							output_string oc (" (= x" ^ (string_of_int leftDim) ^ " ");
+							output_string oc (makeAddrFunAppl ("x" ^ (string_of_int rightDim)) lv);
+							output_string oc "))))\n"
+						end
+					) outpEqs.(leftDim).(rightDim) done done
+			);
 			let qvarsNA = String.concat " " (Array.to_list (Array.mapi (fun idx _ -> "(x" ^ (string_of_int idx) ^ " S)") na.(0)))
 			and needsForAll = (Array.length na.(0)) > 0
 			in
 			let Some (_, _, fwdmap) = ncc.(0)
 			in
 			match n.nkind.nodeintlbl with
-			| NNAnd
-			| NNOr -> begin
+			| NNAnd _
+			| NNOr _ -> begin
 				output_string oc "(assert ";
 				if needsForAll then 
 				begin
 					output_string oc ("(forall (" ^ qvarsNA ^ ") ")
 				end;
 				output_string oc "(= (";
-				output_string oc (match n.nkind.nodeintlbl with | NNAnd -> "and " | _ -> "or ");
+				output_string oc (match n.nkind.nodeintlbl with | NNAnd _ -> "and " | _ -> "or ");
 				DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
 					let Some (nprevid, _, backmap) = cc.(0)
 					in
@@ -850,7 +907,12 @@ let writeBooleanDescToZ3 dg oc =
 				if needsForAll then (output_string oc ")");
 				output_string oc ")\n"
 			end
-			| NNLongOr -> begin
+			| NNLongOr _
+			| NNLongAnd _ -> begin
+				let isLongOr = (match n.nkind.nodeintlbl with NNLongOr _ -> true | _ -> false)
+				in
+				let outputTwo s1 s2 = if isLongOr then output_string oc (s1 ^ " " ^ s2) else output_string oc (s2 ^ " " ^ s1)
+				in
 				let backmappl = ref None
 				and previdpl = ref None
 				in
@@ -866,53 +928,123 @@ let writeBooleanDescToZ3 dg oc =
 				output_string oc "(assert ";
 				output_string oc ("(forall (" ^ qvarsNA ^ ") ");
 				output_string oc "(=> ";
-				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc " ";
-				output_string oc (idAndArgsToStr n.id fwdmap);
+				outputTwo (idAndArgsToStr previd backmap) (idAndArgsToStr n.id fwdmap);
 				output_string oc ")))\n";
-				let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
-				in
-				let freeDims =
-					let res = Array.make (Array.length na.(0)) true
-					in
-					Array.iter (fun x -> res.(x) <- false
-					) fwdmap;
-					res
-				in
-				let qvarsNAminusB = Buffer.create 16
-				and isFirstInBuf = ref true
-				in
-				Array.iteri (fun idx b ->
-					if b then
+				match extractDimEqInformation n.id with
+					| None ->
 					begin
-						(if not !isFirstInBuf then Buffer.add_char qvarsNAminusB ' ');
-						isFirstInBuf := false;
-						Buffer.add_string qvarsNAminusB "(x";
-						Buffer.add_string qvarsNAminusB (string_of_int idx);
-						Buffer.add_string qvarsNAminusB " S)"
-					end else ()				
-				) freeDims;
-				let needsQA = (Array.length fwdmap) > 0
-				and needsQE = (Array.length na.(0)) > (Array.length fwdmap)
-				in
-				output_string oc "(assert ";
-				(if needsQA then output_string oc ("(forall (" ^ qvarsNB ^ ") "));
-				(if needsQE then begin
-					output_string oc "(exists (";
-					Buffer.output_buffer oc qvarsNAminusB;
-					output_string oc ") " end
-				);
-				output_string oc "(=> ";
-				output_string oc (idAndArgsToStr n.id fwdmap);
-				output_string oc " ";
-				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc ")";
-				(if needsQE then output_string oc ")");
-				(if needsQA then output_string oc ")");
-				output_string oc ")\n"
+						let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
+						in
+						let freeDims =
+							let res = Array.make (Array.length na.(0)) true
+							in
+							Array.iter (fun x -> res.(x) <- false
+							) fwdmap;
+							res
+						in
+						let qvarsNAminusB = Buffer.create 16
+						and isFirstInBuf = ref true
+						in
+						Array.iteri (fun idx b ->
+							if b then
+							begin
+								(if not !isFirstInBuf then Buffer.add_char qvarsNAminusB ' ');
+								isFirstInBuf := false;
+								Buffer.add_string qvarsNAminusB "(x";
+								Buffer.add_string qvarsNAminusB (string_of_int idx);
+								Buffer.add_string qvarsNAminusB " S)"
+							end else ()				
+						) freeDims;
+						let needsQA = (Array.length fwdmap) > 0
+						and needsQE = (Array.length na.(0)) > (Array.length fwdmap)
+						in
+						output_string oc "(assert ";
+						(if needsQA then output_string oc ("(forall (" ^ qvarsNB ^ ") "));
+						(if needsQE then begin
+							output_string oc "(exists (";
+							Buffer.output_buffer oc qvarsNAminusB;
+							output_string oc ") " end
+						);
+						output_string oc "(=> ";
+						outputTwo (idAndArgsToStr n.id fwdmap) (idAndArgsToStr previd backmap);
+						output_string oc ")";
+						(if needsQE then output_string oc ")");
+						(if needsQA then output_string oc ")");
+						output_string oc ")\n"
+					end
+					| Some (inpEqs,outpEqs) ->
+					begin
+						let qvarsNB = String.concat " " (Array.to_list (Array.map (fun idx -> "(x" ^ (string_of_int idx) ^ " S)" ) fwdmap))
+						in
+						let invFwdMap =
+							let res = Array.make (Array.length na.(0)) (-1)
+							in
+							Array.iteri (fun idx x -> res.(x) <- idx
+							) fwdmap;
+							res
+						and invBackMap =
+							let res = Array.make (Array.length na.(0)) (-1)
+							in
+							Array.iteri (fun idx x -> res.(x) <- idx
+							) backmap;
+							res
+						in
+						let freeDimVals = Array.init (Array.length na.(0)) (fun idx ->
+							if invFwdMap.(idx) >= 0 then None else
+							List.fold_right (fun sidx res ->
+								match res with
+								| Some _ -> res
+								| None ->
+									if (invFwdMap.(sidx) = (-1)) || (invBackMap.(sidx) = (-1)) then None else
+									Hashtbl.fold (fun (lv,b) () res ->
+										if (b && (not isLongOr)) || ((not b) && isLongOr) then res else
+										match res with
+										| Some _ -> res
+										| None -> Some (sidx, lv)
+									) inpEqs.(idx).(sidx) None
+							) (intfromto 0 ((Array.length na.(0)) - 1)) None
+						)
+						in
+						let qvarsNAminusB = Buffer.create 16
+						and isFirstInBuf = ref true
+						in
+						Array.iteri (fun idx gg ->
+							if (invFwdMap.(idx) = (-1)) && (gg = None) then
+							begin
+								(if not !isFirstInBuf then Buffer.add_char qvarsNAminusB ' ');
+								isFirstInBuf := false;
+								Buffer.add_string qvarsNAminusB "(x";
+								Buffer.add_string qvarsNAminusB (string_of_int idx);
+								Buffer.add_string qvarsNAminusB " S)"
+							end else ()				
+						) freeDimVals;
+						let needsQA = (Array.length fwdmap) > 0
+						and needsQE = not !isFirstInBuf
+						in
+						output_string oc "(assert ";
+						(if needsQA then output_string oc ("(forall (" ^ qvarsNB ^ ") "));
+						(if needsQE then begin
+							output_string oc "(exists (";
+							Buffer.output_buffer oc qvarsNAminusB;
+							output_string oc ") " end
+						);
+						output_string oc "(=> ";
+						let idAndArgsToStrSpecial = idAndArgsToStrWithFun (fun idx ->
+							match freeDimVals.(idx) with
+								| None -> "x" ^ (string_of_int idx)
+								| Some (sidx, lv) -> makeAddrFunAppl ("x" ^ (string_of_int sidx)) lv
+						)
+						in
+						outputTwo (idAndArgsToStr n.id fwdmap) (idAndArgsToStrSpecial previd backmap);
+						output_string oc ")";
+						(if needsQE then output_string oc ")");
+						(if needsQA then output_string oc ")");
+						output_string oc ")\n"
+					end
 			end
 			| NNId
-			| NNNot -> begin
+			| NNNot
+			| NNNotFlip _ -> begin
 				let isNeg = match n.nkind.nodeintlbl with | NNId -> false | _ -> true
 				in
 				let backmappl = ref None
@@ -928,14 +1060,15 @@ let writeBooleanDescToZ3 dg oc =
 				and Some previd = !previdpl
 				in
 				output_string oc "(assert ";
-				output_string oc ("(forall (" ^ qvarsNA ^ ") ");
+				(if needsForAll then output_string oc ("(forall (" ^ qvarsNA ^ ") "));
 				output_string oc "(= ";
 				output_string oc (idAndArgsToStr n.id fwdmap);
 				output_string oc " ";
 				(if isNeg then output_string oc "(not ");
 				output_string oc (idAndArgsToStr previd backmap);
 				(if isNeg then output_string oc ")");
-				output_string oc ")))\n"
+				(if needsForAll then output_string oc ")");
+				output_string oc "))\n"
 			end
 		end
 	) dg ()
@@ -945,7 +1078,7 @@ let askZ3ForRedundantEdges dg oc =
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	DG.foldnodes (fun n () ->
-		if n.nkind.nodeintlbl = NNAnd then
+		if (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then
 		begin
 			let (AITT na) = n.inputindextype
 			and (IxM ncc) = n.ixtypemap
@@ -974,6 +1107,7 @@ let askZ3ForRedundantEdges dg oc =
 				output_string oc (idAndArgsToStr previd backmap);
 				output_string oc "))\n";
 				output_string oc "(check-sat)\n";
+				flush oc;
 				output_string oc "(pop)\n"
 			) n ()
 		end
@@ -989,41 +1123,46 @@ let askZ3ForRedundantMaxEdges dg0 oc =
 	output_string oc "(reset)\n";
 	writeOrderingToZ3 !currdg oc;
 	let () = DG.foldnodes (fun n0 () ->
-		if n0.nkind.nodeintlbl <> NNMaximum then () else
-		let (AITT na) = n0.inputindextype
-		and (IxM ncc) = n0.ixtypemap
-		in
-		let Some (_, _, fwdmap) = ncc.(0)
-		in
-		DG.nodefoldedges (fun ((IxM cc, eid), _, _) () ->
-			let Some (previd, _, backmap) = cc.(0)
-			in
-			output_string oc "(push)\n";
-			output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n0.id) ^ "...\")\n" );
-			Array.iteri (fun idx _ ->
-				output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
-			) na.(0);
-			DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
-				if eid = eid' then () else
-				let Some (previd',_,backmap') = cc'.(0)
+		match n0.nkind.nodeintlbl with
+			| NNMaximum ->
+			begin
+				let (AITT na) = n0.inputindextype
+				and (IxM ncc) = n0.ixtypemap
 				in
-				output_string oc "(assert (";
-				output_string oc (if eid < eid' then "< " else "<= ");
-				output_string oc (idAndArgsToStr previd' backmap');
-				output_string oc " ";
-				output_string oc (idAndArgsToStr previd backmap);
-				output_string oc "))\n"
-			) n0 ();
-			output_string oc "(check-sat)\n";
-			output_string oc "(pop)\n"
-			) n0 ()
-		) !currdg ()
-		in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				DG.nodefoldedges (fun ((IxM cc, eid), _, _) () ->
+					let Some (previd, _, backmap) = cc.(0)
+					in
+					output_string oc "(push)\n";
+					output_string oc ("(echo \"Now testing the edge from v_" ^ (NewName.to_string previd) ^ " to v_" ^ (NewName.to_string n0.id) ^ "...\")\n" );
+					Array.iteri (fun idx _ ->
+						output_string oc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+					) na.(0);
+					DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
+						if eid = eid' then () else
+						let Some (previd',_,backmap') = cc'.(0)
+						in
+						output_string oc "(assert (";
+						output_string oc (if eid < eid' then "< " else "<= ");
+						output_string oc (idAndArgsToStr previd' backmap');
+						output_string oc " ";
+						output_string oc (idAndArgsToStr previd backmap);
+						output_string oc "))\n"
+					) n0 ();
+					output_string oc "(check-sat)\n";
+					flush oc;
+					output_string oc "(pop)\n"
+				) n0 ()
+			end
+			| _ -> ()
+	) !currdg ()
+	in
 	output_string oc "(exit)\n";
 	flush oc
 ;;
 
-let removeRedundantMaxEdges dg0 =
+let removeRedundantMaxEdges_alternate dg0 =
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	let currdg = ref dg0
@@ -1062,7 +1201,7 @@ let removeRedundantMaxEdges dg0 =
 				) n0 ();
 				output_string oc "(check-sat)\n";
 				flush oc;
-				let answer = input_line ic
+				let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 				in
 				output_string oc "(pop)\n";
 				if answer = "unknown" then
@@ -1086,13 +1225,20 @@ let removeRedundantMaxEdges dg0 =
 			currdg := IdtSet.fold DG.remedge redundantEdges !currdg
 		end
 	done;
+	print_endline "Telling \"exit\" to Z3";
 	output_string oc "(exit)\n";
+	print_endline "Did put \"exit\" on output channel. Now flushing it";
 	flush oc;
+	print_endline "Flushed the channel. Let us flush all other channels as well";
+	flush_all ();
+	print_endline "Flushed all other channels. Let us close the Z3 process";
 	ignore (Unix.close_process (ic,oc));
+	print_endline "Closed the Z3 process";
 	!currdg
 ;;
 
-let removeRedundantEdgesWithZ3 dg0 =
+let removeRedundantEdgesWithZ3_alternate dg0 =
+	print_endline "Enter removeRedundantEdges";
 	let idAndArgsToStr = idAndArgsToStrWithPref "d"
 	in
 	let currdg = ref dg0
@@ -1101,14 +1247,17 @@ let removeRedundantEdgesWithZ3 dg0 =
 	in
 	output_string oc "(set-option :timeout 2000)\n";
 	while !runagain do
+		print_endline "Start iteration";
 		runagain := false;
 		output_string oc "(reset)\n";
-		writeBooleanDescToZ3 !currdg oc;
+		writeBooleanDescToZ3 !currdg oc None;
+		print_string "Sent description to Z3\n";
 		let dgForIter = !currdg
 		in
 		DG.foldnodes (fun n0 () ->
-			if n0.nkind.nodeintlbl = NNAnd then
+			if (match n0.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then
 			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
 				let changes = ref false
 				and n = DG.findnode n0.id !currdg
 				in
@@ -1120,6 +1269,7 @@ let removeRedundantEdgesWithZ3 dg0 =
 				DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
 					if not !changes then
 					begin
+						print_endline ("No changes yet. Working with edge no. " ^ (NewName.to_string testeid));
 						let Some (previd, _, backmap) = cc.(0)
 						in
 						output_string oc "(push)\n";
@@ -1139,20 +1289,23 @@ let removeRedundantEdgesWithZ3 dg0 =
 						output_string oc "(assert (not ";
 						output_string oc (idAndArgsToStr previd backmap);
 						output_string oc "))\n";
+						print_endline "Calling check-sat";
 						output_string oc "(check-sat)\n";
 						flush oc;
-						let answer = input_line ic
+						let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 						in
+						print_endline "Received answer";
 						(if answer = "unknown" then
 						begin
 							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
 						end);
 						(if answer = "unsat" then
 						begin
+							print_endline "The answer was UNSAT\n";
 							changes := true;
 							runagain := true;
 							currdg := DG.remedge testeid !currdg;
-							print_string ("Getting rid of edge no. " ^ (NewName.to_string testeid) ^ "\n");
+							print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
 						end);
 						output_string oc "(pop)\n";
 					end
@@ -1160,11 +1313,592 @@ let removeRedundantEdgesWithZ3 dg0 =
 			end
 		) dgForIter ()
 	done;
+	print_endline "Telling \"exit\" to Z3";
 	output_string oc "(exit)\n";
+	print_endline "Did put \"exit\" on output channel. Now flushing it";
 	flush oc;
+	print_endline "Flushed the channel. Let us flush all other channels as well";
+	flush_all ();
+	print_endline "Flushed all other channels. Let us close the Z3 process";
 	ignore (Unix.close_process (ic,oc));
+	print_endline "Closed the Z3 process";
 	!currdg
 ;;
+
+let rrewz_entry_count = ref 0;;
+
+let removeRedundantMaxEdges dg0 =
+	print_endline "Enter removeRedundantMaxEdges";
+	let idAndArgsToStr = idAndArgsToStrWithPref "d"
+	and writeBothChans oc1 oc2 s = (output_string oc1 s; output_string oc2 s)
+	in
+	let x = !rrewz_entry_count
+	in
+	rrewz_entry_count := x + 1;
+	let tc = open_out ("removeRedundantMaxEdges_" ^ (string_of_int x))
+	in
+	let currdg = ref (DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
+		let Some (srcid, _, _) = cc.(0)
+		in
+		let nsrc = DG.findnode srcid dgcurr
+		in
+		if (nsrc.nkind.nodeintlbl = NNError) && ((portdesc prt).inputnum = PortUnbounded) then
+			DG.remedge eid dgcurr
+		else dgcurr
+	) dg0 dg0)
+	and runagain = ref true
+	in
+	while !runagain do
+		print_endline "Start iteration";
+		runagain := false;
+		let dgForIter = !currdg
+		in
+		DG.foldnodes (fun n0 () ->
+			let isTimepointComparison nx =
+				DG.nodefoldedges (fun ((IxM cc, _),_,_) b ->
+					if (not b) then false else
+					let Some (srcid,_,_) = cc.(0)
+					in
+					let srcn = DG.findnode srcid dgForIter
+					in
+					(srcn.nkind.outputtype = VTimePoint)
+				) nx true
+			in
+			if (n0.nkind.nodeintlbl = NNMaximum) || ((n0.nkind.nodeintlbl = NNOperation OPLessThan) && (isTimepointComparison n0)) then
+			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
+				let changes = ref false
+				and n = DG.findnode n0.id !currdg
+				in
+				let (AITT na) = n.inputindextype
+				and (IxM ncc) = n.ixtypemap
+				in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				(if n0.nkind.nodeintlbl = NNMaximum then
+				begin
+					DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
+					(* if not !changes then *)
+						begin
+							print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
+							output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
+							let (ic,oc) = Unix.open_process "z3 -in"
+							in
+							writeBothChans oc tc "(set-option :timeout 20)\n";
+							writeBothChans oc tc "(declare-sort S)\n";
+							writeOrderingToZ3 !currdg oc;
+							writeOrderingToZ3 !currdg tc;
+							print_string "Sent description to Z3\n";
+							let Some (previd, _, backmap) = cc.(0)
+							in
+							Array.iteri (fun idx _ ->
+								writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+							) na.(0);
+							DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
+								if testeid = eid' then () else
+								let Some (previd',_,backmap') = cc'.(0)
+								in
+								writeBothChans oc tc "(assert (";
+								writeBothChans oc tc (if testeid < eid' then "< " else "<= ");
+								writeBothChans oc tc (idAndArgsToStr previd' backmap');
+								writeBothChans oc tc " ";
+								writeBothChans oc tc (idAndArgsToStr previd backmap);
+								writeBothChans oc tc "))\n"
+							) n0 ();
+							print_endline "Calling check-sat";
+							writeBothChans tc oc "(check-sat)\n";
+							flush oc;
+							let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+							in
+							print_endline "Received answer";
+							(if answer = "unknown" then
+							begin
+								print_endline ("Could not figure out if max-input edge " ^ (NewName.to_string testeid) ^ " is removable")
+							end);
+							(if answer = "unsat" then
+							begin
+								print_endline "The answer was UNSAT";
+								changes := true;
+								runagain := true;
+								currdg := DG.remedge testeid !currdg;
+								print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
+							end);
+							writeBothChans oc tc "(exit)\n";
+							output_string tc ("Answer is " ^ answer ^ "\n");
+							flush oc;
+							ignore (Unix.close_process (ic,oc));
+						end
+					) n ()
+				end else if n.nkind.nodeintlbl = NNOperation OPLessThan then
+				begin
+					let (ic,oc) = Unix.open_process "z3 -in"
+					in
+					writeBothChans oc tc "(set-option :timeout 20)\n";
+					writeBothChans oc tc "(declare-sort S)\n";
+					writeOrderingToZ3 !currdg oc;
+					writeOrderingToZ3 !currdg tc;
+					print_string "Sent description to Z3\n";
+					let eid1 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 1))
+					and eid2 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 2))
+					in
+					let ((IxM cc1,_),_,_) = DG.findedge eid1 !currdg
+					and ((IxM cc2,_),_,_) = DG.findedge eid2 !currdg
+					in
+					let Some (srcid1,_,backmap1) = cc1.(0)
+					and Some (srcid2,_,backmap2) = cc2.(0)
+					and alwaysFalse = ref false
+					and alwaysTrue = ref false
+					in
+					Array.iteri (fun idx _ ->
+						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n");
+					) na.(0);
+					writeBothChans oc tc "(push)\n";
+					writeBothChans oc tc "(assert (< ";
+					writeBothChans oc tc (idAndArgsToStr srcid1 backmap1);
+					writeBothChans oc tc " ";
+					writeBothChans oc tc (idAndArgsToStr srcid2 backmap2);
+					writeBothChans oc tc "))\n";
+					print_endline "Calling check-sat for always false";
+					writeBothChans oc tc "(check-sat)\n";
+					flush oc;
+					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+					in
+					print_endline "Received answer";
+					output_string tc ("Answer is " ^ answer ^ "\n");
+					(if answer = "unknown" then
+						print_endline "Received \"unknown\""
+					);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT";
+						alwaysFalse := true;
+					end);
+					writeBothChans oc tc "(pop)\n";
+					writeBothChans oc tc "(assert(<= ";
+					writeBothChans oc tc (idAndArgsToStr srcid2 backmap2);
+					writeBothChans oc tc " ";
+					writeBothChans oc tc (idAndArgsToStr srcid1 backmap1);
+					writeBothChans oc tc "))\n";
+					print_endline "Calling check-sat for always true";
+					writeBothChans oc tc "(check-sat)\n";
+					flush oc;
+					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+					in
+					print_endline "Received answer";
+					output_string tc ("Answer is " ^ answer ^ "\n");
+					(if answer = "unknown" then
+						print_endline "Received \"unknown\""
+					);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT";
+						alwaysTrue := true;
+					end);
+					writeBothChans oc tc "(exit)\n";
+					flush oc;
+					ignore (Unix.close_process (ic,oc));
+					(if !alwaysFalse || !alwaysTrue then
+					begin
+						let nnew = {n with nkind = if !alwaysFalse then nkFalse else nkTrue; inputs = PortMap.empty}
+						in
+						currdg := DG.changenode nnew !currdg
+					end)
+				end);
+			end
+		) dgForIter ()
+	done;
+	close_out tc;
+	!currdg
+;;
+
+(*
+let removeRedundantEdgesWithZ3 dg0 eqDimsInformation =
+	print_endline "Enter removeRedundantEdges";
+	let idAndArgsToStr = idAndArgsToStrWithPref "d"
+	and writeBothChans oc1 oc2 s = (output_string oc1 s; output_string oc2 s)
+	and z3chanIsBad = ref false
+	in
+	let x = !rrewz_entry_count
+	in
+	rrewz_entry_count := x + 1;
+	let tc = open_out ("removeRedundantEdges_" ^ (string_of_int x))
+	in
+	let currdg = ref dg0
+	and runagain = ref true
+	in
+	while !runagain do
+		print_endline "Start iteration";
+		runagain := false;
+		if eqDimsInformation <> None then
+		begin
+			let dgForIter = !currdg
+			in
+			DG.foldnodes (fun n0 () ->
+				if (match n0.nkind.nodeintlbl with NNAnd bb | NNOr bb | NNLongOr bb | NNLongAnd bb -> true | _ -> false) then
+				begin
+					print_endline ("Trying to remove node no. " ^ (NewName.to_string n0.id));
+					let (AITT nb) = n0.inputindextype
+					in
+					let (ic,oc) = Unix.open_process "z3 -in"
+					in
+					writeBothChans oc tc "(set-option :timeout 20)\n";
+					writeBothChans oc tc "(declare-sort S)\n";
+					writeBooleanDescToZ3 !currdg oc eqDimsInformation;
+					writeBooleanDescToZ3 !currdg tc eqDimsInformation;
+					print_string "Sent description to Z3\n";
+					Array.iteri (fun idx _ ->
+						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+					) nb.(0);
+					writeBothChans tc oc "(assert ";
+					writeBothChans oc tc (idAndArgsToStr n0.id (Array.init (Array.length nb.(0)) (fun i -> i)));
+					writeBothChans tc oc ")\n";
+					print_endline "Calling check-sat";
+					writeBothChans tc oc "(check-sat)\n";
+					flush oc;
+					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; z3chanIsBad := true; "unknown")
+					in
+					print_endline "Received answer";
+					(if answer = "unknown" then
+					begin
+						print_endline ("Could not figure out if node " ^ (NewName.to_string n0.id) ^ " is always false")
+					end);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT\n";
+						runagain := true;
+						let newn = {
+							id = n0.id;
+							nkind = nkFalse;
+							inputindextype = n0.outputindextype;
+							outputindextype = n0.outputindextype;
+							ixtypemap = identityIndexMap () n0.outputindextype;
+							inputs = PortMap.empty;
+						}
+						in
+						currdg := DG.changenode newn !currdg;
+						print_endline ("Getting rid of node no. " ^ (NewName.to_string n0.id));
+					end);
+					print_endline "Telling \"exit\" to Z3";
+					(if !z3chanIsBad then output_string tc else writeBothChans oc tc) "(exit)\n";
+					output_string tc ("Answer is " ^ answer ^ "\n");
+					print_endline "Did put \"exit\" on output channels. Now flushing them all";
+					flush_all ();
+					print_endline "Flushed all other channels. Let us close the Z3 process";
+					ignore (Unix.close_process (ic,oc));
+					print_endline "Closed the Z3 process";
+					z3chanIsBad := false
+				end
+			) dgForIter ()
+		end;
+		let dgForIter = !currdg
+		in
+		DG.foldnodes (fun n0 () ->
+			if (match n0.nkind.nodeintlbl with NNAnd _ | NNOr _ -> true | _ -> false) then
+			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
+				let changes = ref false
+				and isAnd = (match n0.nkind.nodeintlbl with NNAnd _ -> true | _ -> false)
+				and n = DG.findnode n0.id !currdg
+				in
+				let (AITT na) = n.inputindextype
+				and (IxM ncc) = n.ixtypemap
+				in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
+					(* if not !changes then *)
+					begin
+						print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
+						output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
+						let (ic,oc) = Unix.open_process "z3 -in"
+						in
+						writeBothChans oc tc "(set-option :timeout 20)\n";
+						writeBothChans oc tc "(declare-sort S)\n";
+						writeBooleanDescToZ3 !currdg oc eqDimsInformation;
+						writeBooleanDescToZ3 !currdg tc eqDimsInformation;
+						print_string "Sent description to Z3\n";
+						let Some (previd, _, backmap) = cc.(0)
+						in
+						Array.iteri (fun idx _ ->
+							writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+						) na.(0);
+						DG.nodefoldedges (fun ((IxM cc', othereid), _, _) () ->
+							if othereid <> testeid then
+							begin
+								let Some (previd', _, backmap') = cc'.(0)
+								in
+								writeBothChans oc tc "(assert ";
+								(if not isAnd then writeBothChans oc tc "(not ");
+								writeBothChans oc tc (idAndArgsToStr previd' backmap');
+								(if not isAnd then writeBothChans tc oc ")");
+								writeBothChans tc oc ")\n"
+							end
+						) n ();
+						writeBothChans tc oc "(assert ";
+						(if isAnd then writeBothChans tc oc "(not ");
+						writeBothChans tc oc (idAndArgsToStr previd backmap);
+						(if isAnd then writeBothChans tc oc ")");
+						writeBothChans tc oc ")\n";
+						print_endline "Calling check-sat";
+						writeBothChans tc oc "(check-sat)\n";
+						flush oc;
+						let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; z3chanIsBad := true; "unknown")
+						in
+						print_endline "Received answer";
+						(if answer = "unknown" then
+						begin
+							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
+						end);
+						(if answer = "unsat" then
+						begin
+							print_endline "The answer was UNSAT\n";
+							changes := true;
+							runagain := true;
+							currdg := DG.remedge testeid !currdg;
+							print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
+						end);
+						print_endline "Telling \"exit\" to Z3";
+						(if !z3chanIsBad then output_string tc else writeBothChans oc tc) "(exit)\n";
+						output_string tc ("Answer is " ^ answer ^ "\n");
+						print_endline "Did put \"exit\" on output channels. Now flushing them all";
+						flush_all ();
+						print_endline "Flushed all other channels. Let us close the Z3 process";
+						ignore (Unix.close_process (ic,oc));
+						print_endline "Closed the Z3 process";
+						z3chanIsBad := false
+					end
+				) n ()
+			end
+		) dgForIter ()
+	done;
+	close_out tc;
+	!currdg
+;;
+*)
+
+let removeRedundantEdgesWithZ3 dg0 eqDimsInformation =
+	print_endline "Enter removeRedundantEdges";
+	let idAndArgsToStr = idAndArgsToStrWithPref "d"
+	and writeBothChans oc1 oc2 s = (output_string oc1 s; output_string oc2 s)
+	and z3chanIsBad = ref false
+	in
+	let x = !rrewz_entry_count
+	in
+	rrewz_entry_count := x + 1;
+	let tc = open_out ("removeRedundantEdges_" ^ (string_of_int x))
+	in
+	let currdg = ref dg0
+	and runagain = ref true
+	in
+	while !runagain do
+		print_endline "Start iteration";
+		runagain := false;
+		if eqDimsInformation <> None then
+		begin
+			let dgForIter = !currdg
+			in
+			DG.foldnodes (fun n0 () ->
+				if (match n0.nkind.nodeintlbl with NNAnd bb | NNOr bb | NNLongOr bb | NNLongAnd bb -> true | _ -> false) then
+				begin
+					print_endline ("Trying to remove node no. " ^ (NewName.to_string n0.id));
+					let (AITT nb) = n0.inputindextype
+					in
+					let answer =
+					try
+					let inpPipeOut, inpPipeIn = Unix.pipe ()
+					and outpPipeOut, outpPipeIn = Unix.pipe ()
+					and errPipeOut, errPipeIn = Unix.pipe ()
+					in
+					let ic = Unix.in_channel_of_descr inpPipeOut
+					and oc = Unix.out_channel_of_descr outpPipeIn
+					in
+					set_binary_mode_in ic false;
+					set_binary_mode_out oc false;
+					let z3Pid = Unix.create_process "z3" [| "z3"; "-in" |] outpPipeOut inpPipeIn errPipeIn 
+					in
+					writeBothChans oc tc "(set-option :timeout 18)\n";
+					writeBothChans oc tc "(declare-sort S)\n";
+					writeBooleanDescToZ3 !currdg oc eqDimsInformation;
+					writeBooleanDescToZ3 !currdg tc eqDimsInformation;
+					print_string "Sent description to Z3\n";
+					Array.iteri (fun idx _ ->
+						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+					) nb.(0);
+					writeBothChans tc oc "(assert ";
+					writeBothChans oc tc (idAndArgsToStr n0.id (Array.init (Array.length nb.(0)) (fun i -> i)));
+					writeBothChans tc oc ")\n";
+					print_endline "Calling check-sat";
+					writeBothChans tc oc "(check-sat)\n";
+					flush oc;
+					let res =
+						let (rdThis, _, _) = Unix.select [inpPipeOut] [] [] 0.02
+						in
+						if rdThis = [] then
+						begin
+							print_string "Not ready. "; "unknown"
+						end
+						else
+						begin
+							try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+						end
+					in
+					Unix.kill z3Pid 9;
+					Unix.close inpPipeOut;
+					Unix.close inpPipeIn;
+					Unix.close outpPipeOut;
+					Unix.close outpPipeIn;
+					Unix.close errPipeOut;
+					Unix.close errPipeIn;
+					let (_,pstat) = Unix.waitpid [] z3Pid
+					in
+					(
+						match pstat with
+						| Unix.WEXITED x -> print_endline ("z3 terminated normally with exit code " ^ (string_of_int x))
+						| Unix.WSIGNALED x -> print_endline ("z3 was killed with the signal " ^ (string_of_int x))
+						| Unix.WSTOPPED x -> print_endline ("z3 was stopped with the signal " ^ (string_of_int x))
+					);
+					res
+					with Unix.Unix_error (_,_,_) -> (print_string "Got UNIX error. "; "unknown")
+					in
+					print_endline "Received answer";
+					(if answer = "unknown" then
+					begin
+						print_endline ("Could not figure out if node " ^ (NewName.to_string n0.id) ^ " is always false")
+					end);
+					(if answer = "unsat" then
+					begin
+						print_endline "The answer was UNSAT\n";
+						runagain := true;
+						let newn = {
+							id = n0.id;
+							nkind = nkFalse;
+							inputindextype = n0.outputindextype;
+							outputindextype = n0.outputindextype;
+							ixtypemap = identityIndexMap () n0.outputindextype;
+							inputs = PortMap.empty;
+						}
+						in
+						currdg := DG.changenode newn !currdg;
+						print_endline ("Getting rid of node no. " ^ (NewName.to_string n0.id));
+					end)
+				end
+			) dgForIter ()
+		end;
+		let dgForIter = !currdg
+		in
+		DG.foldnodes (fun n0 () ->
+			if (match n0.nkind.nodeintlbl with NNAnd _ | NNOr _ -> true | _ -> false) then
+			begin
+				print_endline ("Working with node no. " ^ (NewName.to_string n0.id));
+				let changes = ref false
+				and isAnd = (match n0.nkind.nodeintlbl with NNAnd _ -> true | _ -> false)
+				and n = DG.findnode n0.id !currdg
+				in
+				let (AITT na) = n.inputindextype
+				and (IxM ncc) = n.ixtypemap
+				in
+				let Some (_, _, fwdmap) = ncc.(0)
+				in
+				DG.nodefoldedges (fun ((IxM cc, testeid), _, _) () ->
+					(* if not !changes then *)
+					begin
+						print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
+						output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
+						let answer =
+						try
+						let inpPipeOut, inpPipeIn = Unix.pipe ()
+						and outpPipeOut, outpPipeIn = Unix.pipe ()
+						and errPipeOut, errPipeIn = Unix.pipe ()
+						in
+						let ic = Unix.in_channel_of_descr inpPipeOut
+						and oc = Unix.out_channel_of_descr outpPipeIn
+						in
+						set_binary_mode_in ic false;
+						set_binary_mode_out oc false;
+						let z3Pid = Unix.create_process "z3" [| "z3"; "-in" |] outpPipeOut inpPipeIn errPipeIn 
+						in
+						writeBothChans oc tc "(set-option :timeout 18)\n";
+						writeBothChans oc tc "(declare-sort S)\n";
+						writeBooleanDescToZ3 !currdg oc eqDimsInformation;
+						writeBooleanDescToZ3 !currdg tc eqDimsInformation;
+						print_string "Sent description to Z3\n";
+						let Some (previd, _, backmap) = cc.(0)
+						in
+						Array.iteri (fun idx _ ->
+							writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+						) na.(0);
+						DG.nodefoldedges (fun ((IxM cc', othereid), _, _) () ->
+							if othereid <> testeid then
+							begin
+								let Some (previd', _, backmap') = cc'.(0)
+								in
+								writeBothChans oc tc "(assert ";
+								(if not isAnd then writeBothChans oc tc "(not ");
+								writeBothChans oc tc (idAndArgsToStr previd' backmap');
+								(if not isAnd then writeBothChans tc oc ")");
+								writeBothChans tc oc ")\n"
+							end
+						) n ();
+						writeBothChans tc oc "(assert ";
+						(if isAnd then writeBothChans tc oc "(not ");
+						writeBothChans tc oc (idAndArgsToStr previd backmap);
+						(if isAnd then writeBothChans tc oc ")");
+						writeBothChans tc oc ")\n";
+						print_endline "Calling check-sat";
+						writeBothChans tc oc "(check-sat)\n";
+						flush oc;
+						let (rdThis, _, _) = Unix.select [inpPipeOut] [] [] 0.02
+						in
+						let res =
+							if rdThis = [] then
+							begin
+								print_string "Not ready. "; "unknown"
+							end
+							else
+							begin
+								try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+							end
+						in
+						Unix.kill z3Pid 9;
+						Unix.close inpPipeOut;
+						Unix.close inpPipeIn;
+						Unix.close outpPipeOut;
+						Unix.close outpPipeIn;
+						Unix.close errPipeOut;
+						Unix.close errPipeIn;
+						let (_,pstat) = Unix.waitpid [] z3Pid
+						in
+						(
+							match pstat with
+							| Unix.WEXITED x -> print_endline ("z3 terminated normally with exit code " ^ (string_of_int x))
+							| Unix.WSIGNALED x -> print_endline ("z3 was killed with the signal " ^ (string_of_int x))
+							| Unix.WSTOPPED x -> print_endline ("z3 was stopped with the signal " ^ (string_of_int x))
+						);
+						res
+						with Unix.Unix_error (_,_,_) -> (print_string "Got UNIX error. "; "unknown")
+						in
+						print_endline "Received answer";
+						(if answer = "unknown" then
+						begin
+							print_endline ("Could not figure out if edge " ^ (NewName.to_string testeid) ^ " is removable")
+						end);
+						(if answer = "unsat" then
+						begin
+							print_endline "The answer was UNSAT\n";
+							changes := true;
+							runagain := true;
+							currdg := DG.remedge testeid !currdg;
+							print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
+						end)
+					end
+				) n ()
+			end
+		) dgForIter ()
+	done;
+	close_out tc;
+	!currdg
+;;
+
 
 let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks =
 	print_string "Q: ";
@@ -1269,15 +2003,93 @@ let answerReachabilityQuestion dg (possIc,oc) srcids tgtids flowThroughs checks 
 	output_string oc "(pop)\n";
 	match possIc with
 		| Some ic -> (
-			let answer = input_line ic
+			let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
 			in
-			if answer = "unknown" then
+			(if answer = "unknown" then
 			begin
 				print_endline ("Received an \"unknown\"")
-			end;
+			end else
+			begin
+				print_endline ("Answer is \"" ^ answer ^ "\"")
+			end);
 			answer = "unsat"
 		)
 		| None -> false
+;;
+
+module GraphForInverseTopolSort =
+struct
+	type t = DG.t
+	
+	module V =
+	struct
+		type t = NewName.idtype
+		
+		let compare = Pervasives.compare
+		let hash = Hashtbl.hash
+		let equal id1 id2 = (id1 = id2)
+	end
+	
+	let iter_vertex f dg = DG.foldnodes (fun n () -> f n.id) dg ()
+	
+	let iter_succ f dg nid = ignore (DG.nodefoldedges (fun ((IxM [| Some (srcid,_,_) |],_),_,_) s -> if IdtSet.mem srcid s then s else (f srcid; IdtSet.add srcid s)) (DG.findnode nid dg) IdtSet.empty); ()
+	
+end;;
+
+module InverseTopolSorter = Graph.Topological.Make(GraphForInverseTopolSort);;
+
+let findEncryptionKeySources dg =
+	let currRes = ref IdtMap.empty
+	in
+	let processNode nid =
+		let n = DG.findnode nid dg
+		in
+		let directKey = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) currDK ->
+			if (tgtn.nkind.nodeintlbl = NNOperation OPEncrypt) && (prt = PortOperInput 2) then IdtSet.add tgtn.id currDK else currDK
+		) n IdtSet.empty
+		in
+		let mapsToEncs = DG.nodefoldoutedges dg (fun ((_,_),tgtn,_) currMTE ->
+			IdtSet.union currMTE (IdtMap.find tgtn.id !currRes)
+		) n directKey
+		in
+		currRes := IdtMap.add nid mapsToEncs !currRes
+	in
+	InverseTopolSorter.iter processNode dg;
+	IdtMap.filter (fun k _ -> let n = DG.findnode k dg in match n.nkind.nodeintlbl with NNInput _ -> true | _ -> false) !currRes
+;;
+
+let addEncryptionAnalysisNodes dg =
+	(* create extra output nodes for encryption keys *)
+	DG.foldnodes (fun n dgcurr ->
+		match n.nkind.nodeintlbl with
+		| NNOperation OPEncrypt 
+		| NNOperation (OPABEncrypt _) ->
+			let keyedgeid = IdtSet.choose (DG.edges_to_port dgcurr n.id (PortOperInput 2))
+			in
+			let ((IxM [| Some (keynodeid, _, keybackmap) |],_),_,_) = DG.findedge keyedgeid dgcurr
+			in
+			let keynode = DG.findnode keynodeid dg
+			in
+			let outpnode = {
+				nkind = nkOutput keynode.nkind.outputtype (RLSet.singleton ("Key of encryption " ^ (NewName.to_string n.id)));
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = keynode.outputindextype;
+				outputindextype = keynode.outputindextype;
+				ixtypemap = identityIndexMap () keynode.outputindextype;
+			}
+			and truenode = {
+				nkind = nkTrue;
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = keynode.outputindextype;
+				outputindextype = keynode.outputindextype;
+				ixtypemap = identityIndexMap () keynode.outputindextype;
+			}
+			in
+			DG.addedge (((identityIndexMap keynode.id keynode.outputindextype), NewName.get ()), outpnode.id, PortSingle keynode.nkind.outputtype) (DG.addedge (((identityIndexMap truenode.id keynode.outputindextype), NewName.get ()), outpnode.id, PortSingleB true) (DG.addnode outpnode (DG.addnode truenode dgcurr)))
+		| _ -> dgcurr
+	) dg dg
 ;;
 
 let checkFlows dg possFName =
@@ -1305,14 +2117,17 @@ let checkFlows dg possFName =
 			| _ -> ss
 	) dg IdtSet.empty
 	and allCheckNodes = DG.foldnodes (fun n ss ->
-		let d = n.nkind.nodelabel n.ixtypemap
+		let d = n.nkind.nodelabel
 		in
 		if ((String.length d) >= 3) && ((String.sub d 0 3) = "is_") then IdtSet.add n.id ss else ss
 	) dg IdtSet.empty
 	and allFilterNodes = DG.foldnodes (fun n ss ->
-		let d = n.nkind.nodelabel n.ixtypemap
+		if n.nkind.nodeintlbl = NNOperation OPEncrypt then IdtSet.add n.id ss else
+		if (match n.nkind.nodeintlbl with NNOperation (OPABEncrypt _ ) -> true | _ -> false) then IdtSet.add n.id ss else
+		let d = n.nkind.nodelabel
 		in
-		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then IdtSet.add n.id ss else ss
+		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then IdtSet.add n.id ss else 
+		if ((String.length d) >= 4) && ((String.sub d 0 4) = "hash") then IdtSet.add n.id ss else ss
 	) dg IdtSet.empty
 	in
 	let outputNames = IdtSet.fold (fun nid mm ->
@@ -1333,19 +2148,50 @@ let checkFlows dg possFName =
 		let answersForInpNode = RLMap.fold (fun outpName outpIds m2 ->
 			(* TODO: https://en.wikipedia.org/wiki/Group_testing is related to the thing we are trying to do below. We are trying to learn a monotone boolean function. Its atoms are not necessarily singleton sets, though *)
 			(* See e.g. Boris Kovalerchuk, Evangelos Triantaphyllou, Aniruddha S. Deshpande, Evgenii Vityaev. Interactive Learning of Monotone Boolean Functions. Information Sciences 94, pp. 87-118, 1996 *)
-			let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
-			and withAll = ref false
-			and withNone = ref false
-			in
-			IdtSet.subsetiter (fun someFilters ->
-				IdtSet.subsetiter (fun someChecks ->
-					if answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.diff allFilterNodes someFilters) (IdtSet.diff allCheckNodes someChecks) then begin
-						(if (IdtSet.is_empty someFilters) && (IdtSet.is_empty someChecks) then withAll := true);
-						(if (IdtSet.equal someFilters allFilterNodes) && (IdtSet.equal someChecks allCheckNodes) then withNone := true)
-					end else allResults := (someFilters, someChecks) :: !allResults
-				) allCheckNodes
-			) allFilterNodes;
-			RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
+			if (* (IdtSet.is_empty allFilterNodes) && *) (IdtSet.is_empty allCheckNodes) then
+			begin
+				let allResults = ref []
+				and withAll = ref false
+				and withNone = ref false
+				and string_of_idtset s = "{" ^ (String.concat ", " (List.map NewName.to_string (IdtSet.elements s))) ^ "}"
+				in
+				IdtSet.subsetiter (fun someFilters ->
+					print_string ("FlowCheck: input: " ^ (NewName.to_string inpNodeId) ^ ", outputs: " ^ (string_of_idtset outpIds) ^ ", filters: " ^ (string_of_idtset someFilters) ^ ", result: ");
+					let dg' = DG.foldnodes (fun n dgcurr ->
+						match n.nkind.nodeintlbl with
+						| NNOutput _ -> if IdtSet.mem n.id outpIds then dgcurr else DG.remnode n.id dgcurr
+						| _ -> if IdtSet.mem n.id someFilters then dgcurr else if IdtSet.mem n.id allFilterNodes then DG.remnode n.id dgcurr else dgcurr
+					) dg dg
+					in
+					let dg'' = GrbOptimize.removeDead dg'
+					in
+					let res = not (DG.hasnode inpNodeId dg'')
+					in
+					if res then
+					begin
+						(if IdtSet.is_empty someFilters then withAll := true);
+						(if IdtSet.equal someFilters allFilterNodes then withNone := true);
+						print_endline "true"
+					end else (allResults := (someFilters, IdtSet.empty) :: !allResults; print_endline "false")
+				) allFilterNodes;
+				RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
+			end
+			else
+			begin
+				let allResults = ref [] (* allResults :: (IdtSet.t * IdtSet.t) list; contains all pairs of sets for which the reachability question answer is true *)
+				and withAll = ref false
+				and withNone = ref false
+				in
+				IdtSet.subsetiter (fun someFilters ->
+					IdtSet.subsetiter (fun someChecks ->
+						if answerReachabilityQuestion dg (ic,oc) (IdtSet.singleton inpNodeId) outpIds (IdtSet.diff allFilterNodes someFilters) (IdtSet.diff allCheckNodes someChecks) then begin
+							(if (IdtSet.is_empty someFilters) && (IdtSet.is_empty someChecks) then withAll := true);
+							(if (IdtSet.equal someFilters allFilterNodes) && (IdtSet.equal someChecks allCheckNodes) then withNone := true)
+						end else allResults := (someFilters, someChecks) :: !allResults
+					) allCheckNodes
+				) allFilterNodes;
+				RLMap.add outpName (!withAll, !withNone, onlyMinimalResults !allResults) m2
+			end
 		) outputNames RLMap.empty
 		in
 		IdtMap.add inpNodeId answersForInpNode m1

@@ -1,6 +1,8 @@
 open GrbGraphs;;
 open GrbCommons;;
 
+let (|>) x f = f x;;
+
 let removeDead dg =
 	let checkNodes = Queue.create ()
 	and liveNodes = Hashtbl.create (DG.foldnodes (fun _ i -> i+1) dg 0)
@@ -31,26 +33,31 @@ let removeDead dg =
 ;;
 
 let foldIdentity dg =
-  let newdg = DG.foldedges (fun ((conn,eid),tgt,prt) dgcurr ->
-  	let srcidset = connectionsources conn
-  	in
-  	let changes = ref false
-  	in
-  	let newconn = IdtSet.fold (fun srcid currconn ->
-  		let n = DG.findnode srcid dgcurr
-  		in
-  		match n.nkind.nodeintlbl with
-  			| NNId -> changes := true; DG.nodefoldedges (fun ((upconn,_),_,_) conn' ->
-  				composeIxM conn' n.id upconn
-  				) n currconn
-  			| _ -> currconn
-  	) srcidset conn
-  	in
-	if !changes then DG.addedge ((newconn,eid), tgt.id, prt) (DG.remedge eid dgcurr)
-	else dgcurr
-  ) dg dg
-  in
-  newdg
+	let globChanges = ref true
+	and newdg = ref dg
+	in
+	while !globChanges do
+		globChanges := false;
+		newdg := DG.foldedges (fun ((conn,eid),tgt,prt) dgcurr ->
+			let srcidset = connectionsources conn
+			in
+			let changes = ref false
+			in
+			let newconn = IdtSet.fold (fun srcid currconn ->
+				let n = DG.findnode srcid dgcurr
+				in
+				match n.nkind.nodeintlbl with
+		  			| NNId -> changes := true; globChanges := true; DG.nodefoldedges (fun ((upconn,_),_,_) conn' ->
+		  				composeIxM conn' n.id upconn
+	  				) n currconn
+		  			| _ -> currconn
+		  	) srcidset conn
+		  	in
+			if !changes then DG.addedge ((newconn,eid), tgt.id, prt) (DG.remedge eid dgcurr)
+			else dgcurr
+		) !newdg !newdg
+	done;
+	!newdg
 ;;
 
 let splitIndexTypes dg =
@@ -178,15 +185,19 @@ let areIndicesInOrder s dg =
 	dg
 ;;
 
+(*
 let foldThingsTogether dg suitableIntLbl =
-	let rec makeLongEdge (IxM m) =
+	let rec makeLongEdge (IxM m) noPassNodes =
 		let Some (midid, comp, prt) = m.(0)
 		in
+		if IdtSet.mem midid noPassNodes then (print_string "Found a cycle of nodes: "; print_string (String.concat ", " (List.map NewName.to_string (IdtSet.elements noPassNodes))); print_newline (); []) else
 		let midn = DG.findnode midid dg
 		in
 		if suitableIntLbl midn.nkind.nodeintlbl then
+			let newNoPassNodes = IdtSet.add midid noPassNodes
+			in
 			DG.nodefoldedges (fun ((cc, _),_,_) ll ->
-				let lx = makeLongEdge cc
+				let lx = makeLongEdge cc newNoPassNodes
 				in
 				(List.map (fun (IxM m') -> composeIxM (IxM m) midid (IxM m')) lx) @ ll
 			) midn []
@@ -195,17 +206,109 @@ let foldThingsTogether dg suitableIntLbl =
 	DG.foldnodes (fun n dgcurr ->
 		if suitableIntLbl n.nkind.nodeintlbl then
 			DG.nodefoldedges (fun ((cc,eid),tgt,prt) dgnext ->
-				let lx = makeLongEdge cc
+				let lx = makeLongEdge cc (IdtSet.singleton n.id)
 				in
 				List.fold_right (fun cc' dg' -> DG.addedge ((cc', NewName.get ()), tgt.id, prt) dg') lx (DG.remedge eid dgnext)
 			) n dgcurr
 		else dgcurr
 	) dg dg
 ;;
+*)
 
-let foldAndsTogether dg = foldThingsTogether dg (function NNAnd -> true | _ -> false);;
+let edgecomposition e1backmap n2a n2fwdmap n2b e2backmap n3a =
+	let n2aused =
+		let res = Array.make (Array.length n2a) false
+		in
+		Array.iteri (fun idx v ->
+			res.(v) <- true
+		) n2fwdmap;
+		res
+	and n2fwdmapInv =
+		let res = Array.make (Array.length n2a) (-1)
+		in
+		Array.iteri (fun idx v ->
+			res.(v) <- idx
+		) n2fwdmap;
+		res
+	in
+	let n2aMissCount =
+		let missOrNot = Array.make (Array.length n2a) (-1)
+		in
+		let cnt = ref 0
+		in
+		for i = 0 to (Array.length n2a) - 1 do
+			if not n2aused.(i) then
+			begin
+				missOrNot.(i) <- !cnt;
+				cnt := !cnt + 1
+			end
+		done;
+		let res = Array.make ((Array.length n2a) - (Array.length n2b)) (-1)
+		in
+		Array.iteri (fun idx v ->
+			if not n2aused.(idx) then res.(v) <- idx
+		) missOrNot;
+		res
+	in
+	let n2aMissCountInv =
+		let res = Array.make (Array.length n2a) (-1)
+		in
+		Array.iteri (fun idx v ->
+			res.(v) <- idx
+		) n2aMissCount;
+		res
+	in
+	let n3aNew = Array.append n3a (Array.map (fun v -> n2a.(v)) n2aMissCount)
+	in
+	let backmapNew = Array.init (Array.length e1backmap) (fun idx ->
+		let idxAtN2a = e1backmap.(idx)
+		in
+		if n2aused.(idxAtN2a) then e2backmap.(n2fwdmapInv.(idxAtN2a))
+		else n2aMissCountInv.(idxAtN2a) + (Array.length n3a)
+	)
+	in
+	(n3aNew, backmapNew)
+;;
 
-let foldMaxsTogether dg = foldThingsTogether dg (function NNMaximum _ -> true | _ -> false);;
+let foldThingsTogether dg suitableIntLbl loopNodeKind =
+	let changed = ref true
+	and workdg = ref dg
+	in
+	while !changed do
+		changed := false;
+		workdg := DG.foldnodes (fun n dgcurr ->
+			if suitableIntLbl n.nkind.nodeintlbl then
+			begin
+				let n = DG.findnode n.id dgcurr
+				in
+				DG.nodefoldedges (fun (((IxM mm),eid),_,prt) dgnext ->
+					let Some (midid, _, backmap) = mm.(0)
+					in
+					let midn = DG.findnode midid dgnext
+					in
+					if midid = n.id then
+					begin
+						let nnew = {n with nkind = loopNodeKind; inputs = PortMap.empty}
+						in
+						(changed := true; DG.changenode nnew dgnext)
+					end else
+					if suitableIntLbl midn.nkind.nodeintlbl then
+						let dgnext' = DG.nodefoldedges (fun (((IxM mm'),eid'),_,prt') dgdg ->
+							DG.addedge ((composeIxM (IxM mm) midid (IxM mm'), NewName.get ()), n.id, prt) dgdg
+						) midn dgnext
+						in
+						(changed := true; DG.remedge eid dgnext')
+					else dgnext
+				) n dgcurr
+			end else dgcurr
+		) !workdg !workdg;
+	done;
+	!workdg
+;;
+
+let foldAndsTogether dg = foldThingsTogether (foldThingsTogether dg (function NNAnd _ | NNOperation OPAnd -> true | _ -> false) nkFalse) (function NNOr _ | NNOperation OPOr -> true | _ -> false) nkTrue ;;
+
+let foldMaxsTogether dg = foldThingsTogether dg (function NNMaximum _ -> true | _ -> false) nkZeroTimePoint;;
 
 let reduceNodeDim dg nid =
 	let oldToNewMapping useddims =
@@ -604,19 +707,45 @@ let simplifyICA suitableIntLbl hasZeroIntLbl possnkZero hasUnitIntLbl nkUnit dg 
 	end
 ;;
 
+let notOfConstant dg n =
+	if (n.nkind.nodeintlbl <> NNNot) then None else
+	let srcidpl = ref None
+	in
+	DG.nodefoldedges (fun ((IxM cc, _),_,_) () ->
+		let Some (srcid,_,_) = cc.(0)
+		in
+		srcidpl := Some srcid
+	) n ();
+	let Some srcid = !srcidpl
+	in
+	let nsrc = DG.findnode srcid dg
+	in
+	if (match nsrc.nkind.nodeintlbl with NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false) then
+		let nnew = {n with nkind = nkFalse; inputs = PortMap.empty}
+		in
+		Some (DG.changenode nnew dg)
+	else
+	if (match nsrc.nkind.nodeintlbl with NNFalse _ | NNOperation (OPBoolConst false) -> true | _ -> false) then
+		let nnew = {n with nkind = nkTrue; inputs = PortMap.empty}
+		in
+		Some (DG.changenode nnew dg)
+	else
+	None
+;;
+
 let simplifyAnd = simplifyICA
-	(function NNAnd -> true | _ -> false)
-	(function NNFalse -> true | _ -> false)
+	(function NNAnd _ -> true | _ -> false)
+	(function NNFalse _ | NNOperation (OPBoolConst false) -> true | _ -> false)
 	(Some (fun _ -> nkFalse))
-	(function NNTrue -> true | _ -> false)
+	(function NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false)
 	(fun _ -> nkTrue)
 ;;
 
 let simplifyOr = simplifyICA
-	(function NNOr -> true | _ -> false)
-	(function NNTrue -> true | _ -> false)
+	(function NNOr _ -> true | _ -> false)
+	(function NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false)
 	(Some (fun _ -> nkTrue))
-	(function NNFalse -> true | _ -> false)
+	(function NNFalse _ | NNOperation (OPBoolConst false) -> true | _ -> false)
 	(fun _ -> nkFalse)
 ;;
 
@@ -632,8 +761,31 @@ let simplifyMax = simplifyICA
 	(function NNMaximum -> true | _ -> false)
 	(fun _ -> false)
 	None
-	(function NNOperation (OPIntConst 0) -> true | NNOperation (OPRealConst 0.0) -> true | _ -> false)
-	(function VInteger -> nkOperation 0 VInteger (OPIntConst 0) | VReal -> nkOperation 0 VReal (OPRealConst 0.0))
+	(function NNZeroTimePoint -> true | NNOperation (OPIntConst 0) -> true | NNOperation (OPRealConst 0.0) -> true | _ -> false)
+	(function VInteger -> nkOperation 0 VInteger (OPIntConst 0) | VReal -> nkOperation 0 VReal (OPRealConst 0.0) | VTimePoint -> nkZeroTimePoint)
+;;
+
+let contractNoContract dg n =
+	match n.nkind.nodeintlbl with
+		| NNLongOr _
+		| NNLongAnd _
+		| NNLongMerge _ ->
+		begin
+			let (AITT na) = n.inputindextype
+			and (AITT nb) = n.outputindextype
+			in
+			if (Array.length na.(0)) <> (Array.length nb.(0)) then None else
+			let vt = match n.nkind.nodeintlbl with
+				| NNLongOr b | NNLongAnd b -> if b then VBoolean else VNaeloob
+				| NNLongMerge x -> x
+			in
+			let nnew = {n with nkind = nkId vt; inputs = PortMap.empty}
+			in
+			Some (DG.nodefoldedges (fun ((cc,eid),_,prt) dgcurr -> 
+				DG.addedge ((cc, eid), n.id, PortSingle vt) dgcurr
+			) n (DG.changenode nnew dg))
+		end
+		| _ -> None
 ;;
 
 let additionToSum dg n =
@@ -650,19 +802,289 @@ let additionToSum dg n =
 	) n dgwid
 	in
 	Some dgnew
-	
+
+let simplifyEquality dg n =
+	if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then None else
+	begin
+	print_endline ("Trying to simplify equality check no. " ^ (NewName.to_string n.id));
+	let (posssrc1,posssrc2) = DG.nodefoldedges (fun ((IxM cc, _),_,_) (found1, found2) ->
+		if found2 <> None then (found1, found2) else
+		let Some (srcid,_,_) = cc.(0) in
+		if found1 = None then (Some srcid, None) else (found1, Some srcid)
+	) n (None, None)
+	in
+	match posssrc2 with
+		| None -> 
+			let nnew = {n with nkind = nkTrue; inputs = PortMap.empty}
+			in
+			Some (DG.changenode nnew dg)
+		| Some src2id ->
+		begin
+			let Some src1id = posssrc1
+			in
+			let nsrc1 = DG.findnode src1id dg
+			and nsrc2 = DG.findnode src2id dg
+			in
+			match nsrc1.nkind.nodeintlbl with
+				| NNOperation (OPIntConst _) | NNOperation (OPRealConst _) | NNOperation (OPStringConst _) | NNOperation (OPBoolConst _) ->
+				begin
+					let NNOperation l1 = nsrc1.nkind.nodeintlbl
+					in
+					print_endline ("The constant first input is " ^ (string_of_opname l1));
+					match nsrc2.nkind.nodeintlbl with
+					| NNOperation (OPIntConst _) | NNOperation (OPRealConst _) | NNOperation (OPStringConst _) | NNOperation (OPBoolConst _) ->
+					begin
+						let NNOperation l2 = nsrc1.nkind.nodeintlbl
+						in
+						print_endline ("The constant second input is " ^ (string_of_opname l2));
+						let nnew = {n with nkind = (if nsrc1.nkind.nodeintlbl = nsrc2.nkind.nodeintlbl then nkTrue else nkFalse); inputs = PortMap.empty}
+						in
+						Some (DG.changenode nnew dg)
+					end
+					| _ -> None
+				end
+				| _ -> None
+		end
+	end
+;;
+
+let simplifyDecrypt dg n =
+	if (match n.nkind.nodeintlbl with NNOperation OPDecrypt -> false | _ -> true) then None else
+	begin
+		let (possrckey, possrcct) = DG.nodefoldedges (fun ((IxM cc, _),_, kk) (foundkey, foundct) ->
+			if kk = PortOperInput 1 then (cc.(0), foundct)
+			else if kk = PortOperInput 2 then (foundkey, cc.(0))
+			else (foundkey, foundct)
+		) n (None, None)
+		in
+		match possrckey, possrcct with
+		| Some (keyId, _, keybackmap), Some (encnid, _, ctbackmap) ->
+		begin
+			let encn = DG.findnode encnid dg
+			in
+			if (match encn.nkind.nodeintlbl with NNOperation OPEncrypt -> false | _ -> true) then None else
+			let (posenckey, posspt) = DG.nodefoldedges (fun ((IxM cc,_),_,kk) (foundkey, foundpt) ->
+				if kk = PortOperInput 2 then (cc.(0), foundpt)
+				else if kk = PortOperInput 3 then (foundkey, cc.(0))
+				else (foundkey, foundpt)
+			) encn (None, None)
+			and (AITT encaa) = encn.inputindextype
+			and (AITT encbb) = encn.outputindextype
+			and (IxM enccc) = encn.ixtypemap
+			in
+			match posenckey, posspt with
+			| Some (key2id, _, key2backmap), Some (ptid, _, ptbackmap) when key2id = keyId ->
+			begin
+				let Some ((),_,fwdmap) = enccc.(0)
+				in
+				let invfwdmap = Array.make (Array.length fwdmap) (-1)
+				in
+				for i = 0 to (Array.length fwdmap) - 1 do
+					invfwdmap.(fwdmap.(i)) <- i
+				done;
+				let roundkeymap = Array.init (Array.length keybackmap) (fun i -> ctbackmap.(invfwdmap.(key2backmap.(i))))
+				in
+				if Array.fold_right (fun b1 b2 -> b1 && b2) (Array.mapi (fun idx v -> v = keybackmap.(idx)) roundkeymap) true then
+				begin
+					let roundptmap = Array.init (Array.length ptbackmap) (fun i -> ctbackmap.(invfwdmap.(ptbackmap.(i))))
+					in
+					let decrepln = { n with
+						nkind = nkId (n.nkind.outputtype);
+						inputs = PortMap.empty
+					}
+					in
+					Some (DG.addedge ((IxM [| Some (ptid, 0, roundptmap) |], NewName.get ()), n.id, PortSingle (n.nkind.outputtype)) (DG.changenode decrepln dg))
+				end else None
+			end
+			| _ -> None
+		end
+		| _ -> None
+	end
+;;
+
+let rec mapCompose = function
+| [x] -> x
+| x :: y :: xs ->
+	let z = mapCompose xs
+	in
+	let maxX = Array.fold_right (fun v b -> max v b) x (-1)
+	and maxY = Array.fold_right (fun v b -> max v b) y (-1)
+	in
+	let invY =
+		let res = Array.make ((max maxX maxY) + 1) (-1)
+		in
+		for i = 0 to (Array.length y) - 1 do
+			res.(y.(i)) <- i
+		done;
+		res
+	in
+	Array.init (Array.length x) (fun i -> let t = invY.(x.(i)) in if t = (-1) then (-1) else z.(t))
+;;
+
+let simplifyABDecrypt dg n =
+	if (match n.nkind.nodeintlbl with NNOperation OPABDecrypt -> false | _ -> true) then None else
+	begin
+		let (possrckey, possrcct) = DG.nodefoldedges (fun ((IxM cc, _),_, kk) (foundkey, foundct) ->
+			if kk = PortOperInput 1 then (cc.(0), foundct)
+			else if kk = PortOperInput 2 then (foundkey, cc.(0))
+			else (foundkey, foundct)
+		) n (None, None)
+		in
+		match possrckey, possrcct with
+		| Some (privateKeyId,_,privateKeyBackmap), Some (encnid, _, ctbackmap) ->
+		begin
+			let encn = DG.findnode encnid dg
+			and privkeyn = DG.findnode privateKeyId dg
+			in
+			let (IxM encncc) = encn.ixtypemap
+			and (IxM privkeyncc) = privkeyn.ixtypemap
+			in
+			let Some ((),_,encnfwdmap) = encncc.(0)
+			and Some ((),_,privkeynfwdmap) = privkeyncc.(0)
+			in
+			let (possmpk, posspt) = DG.nodefoldedges (fun ((IxM cc,_),_,kk) (foundkey, foundpt) ->
+				if kk = PortOperInput 2 then (cc.(0), foundpt)
+				else if kk = PortOperInput 3 then (foundkey, cc.(0))
+				else (foundkey, foundpt)
+			) encn (None, None)
+			and possmsk1 = DG.nodefoldedges (fun ((IxM cc,_),_,kk) foundkey ->
+				if kk = PortOperInput 1 then cc.(0) else foundkey
+			) privkeyn None
+			in
+			match possmpk, posspt, possmsk1 with
+			| Some (mpkId,_,mpkBackmap), Some (ptId,_,ptBackmap), Some (mskId,_,mskBySKBackmap) ->
+			begin
+				let mpkn = DG.findnode mpkId dg
+				(* and ptn = DG.findnode pkId dg *)
+				and mskn = DG.findnode mskId dg
+				in
+				let (IxM mpkncc) = mpkn.ixtypemap
+				in
+				let Some ((),_,mpknfwdmap) = mpkncc.(0)
+				in
+				let possmsk2 = DG.nodefoldedges (fun ((IxM cc,_),_,kk) foundkey ->
+					if kk = PortOperInput 1 then cc.(0) else foundkey
+				) mpkn None
+				in
+				match possmsk2, encn.nkind.nodeintlbl, privkeyn.nkind.nodeintlbl, mpkn.nkind.nodeintlbl, mskn.nkind.nodeintlbl with
+				| Some (mskId',_,mskByPKBackmap), NNOperation (OPABEncrypt encattrs), NNOperation (OPABExtractSK keyattrs), NNOperation OPABExtractMPK, NNOperation OPABGenMSK when (mskId = mskId') && (RLSet.subset encattrs keyattrs) && ((mapCompose [mskBySKBackmap; privkeynfwdmap; privateKeyBackmap]) = (mapCompose [mskByPKBackmap; mpknfwdmap; mpkBackmap; encnfwdmap; ctbackmap])) ->
+				begin
+					let decrepln = { n with
+						nkind = nkId (n.nkind.outputtype);
+						inputs = PortMap.empty
+					}
+					in
+					Some (DG.addedge ((IxM [| Some (ptId, 0, mapCompose [ptBackmap; encnfwdmap; ctbackmap]) |], NewName.get ()), n.id, PortSingle (n.nkind.outputtype)) (DG.changenode decrepln dg))
+				end
+				| _ -> None
+			end
+			| _ -> None
+		end
+		| _ -> None
+	end
+;;
+
+let simplifyError dg n =
+	let alwaysFalse = DG.nodefoldedges (fun ((IxM cc, _), _, prt) b ->
+		if b then true else
+		let Some (srcid,_,_) = cc.(0)
+		in
+		let srcn = DG.findnode srcid dg
+		in
+		(match srcn.nkind.nodeintlbl with NNError | NNFalse true | NNTrue false -> true | _ -> false) && (PortOptSet.mem POptStrict (portdesc prt).inputopts)
+	) n false
+	in
+	if alwaysFalse then
+	begin
+		let isBool = (n.nkind.outputtype = VBoolean)
+		and isLoob = (n.nkind.outputtype = VNaeloob)
+		in
+		let nnew = {n with nkind = if isBool then nkFalse else if isLoob then nkTrueDT else nkError; inputs = PortMap.empty}
+		in
+		Some (DG.changenode nnew dg)
+	end
+	else None
+;;
+
+let simplifyFilter dg n =
+	if (match n.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> false | _ -> true) then None else
+	let possctrlsrcid = DG.nodefoldedges (fun ((IxM cc, _), _, prt) found ->
+		match found with
+		| Some _ -> found
+		| None -> if prt = PortSingleB true then
+			let Some (srcid, _, _) = cc.(0)
+			in Some srcid
+			else None
+	) n None
+	and possvaledge = DG.nodefoldedges (fun ((IxM cc, eid), _, prt) found ->
+		match found with
+		| Some _ -> found
+		| None -> if (match prt with PortSingle _ -> true | _ -> false) then
+			let Some (srcid, _, _) = cc.(0)
+			in Some (cc, eid, prt)
+			else None
+	) n None
+	in
+	let Some ctrlsrcid = possctrlsrcid
+	and Some (valcc, valeid, valprt) = possvaledge
+	in
+	let nctrl = DG.findnode ctrlsrcid dg
+	in
+	if nctrl.nkind.nodeintlbl = NNFalse true then
+	begin
+		let isBool,isLoob = match n.nkind.nodeintlbl with
+			| NNFilter VBoolean -> true,false
+			| NNFilter VNaeloob -> false,true
+			| _ -> false,false
+		in
+		let nnew = {n with nkind = if isBool then nkFalse else if isLoob then nkTrueDT else nkError; inputs = PortMap.empty}
+		in
+		Some (DG.changenode nnew dg)
+	end
+	else if (nctrl.nkind.nodeintlbl = NNTrue true) && (match n.nkind.nodeintlbl with NNFilter _ -> true | _ -> false) then
+	begin
+		let nnew = {n with nkind = nkId (match n.nkind.nodeintlbl with NNFilter vt -> vt); inputs = PortMap.empty}
+		in
+		Some (DG.addedge ((IxM valcc, valeid), n.id, valprt) (DG.changenode nnew dg))
+	end
+	else None
+;;
 
 let simplifyMerge dg n =
 	if (match n.nkind.nodeintlbl with NNMerge _ -> false | _ -> true) then None else
 	let NNMerge vtype = n.nkind.nodeintlbl
 	in
-	if (PortSet.cardinal n.nkind.ports) <> 1 then None else
+	let changes = ref false
+	in
+	let dg0 = DG.nodefoldedges (fun ((IxM cc, eid),_,_) dgcurr ->
+		let Some (srcid, _, _) = cc.(0)
+		in
+		let srcn = DG.findnode srcid dgcurr
+		in
+		match srcn.nkind.nodeintlbl with
+			| NNError -> (changes := true; DG.remedge eid dgcurr)
+			| _ -> dgcurr
+	) n dg
+	in
+	let n = DG.findnode n.id dg0
+	in
+	let numinputs = DG.nodefoldedges (fun _ c -> c + 1) n 0
+	in
+	if numinputs = 0 then
+	begin
+		print_endline ("Merge node no. " ^ (NewName.to_string n.id) ^ " has no non-Error inputs!");
+		let nnew = {n with nkind = nkError; inputs = PortMap.empty}
+		in
+		Some (DG.changenode nnew dg0)
+	end
+	else
+	if numinputs <> 1 then (if !changes then Some dg0 else None) else
 	let nnew = {n with
 		nkind = nkId vtype;
 		inputs = PortMap.empty;
 	}
 	in
-	let dgwid = DG.changenode nnew dg
+	let dgwid = DG.changenode nnew dg0
 	in
 	let dgnew = DG.nodefoldedges (fun ((cc,eid),_,prt) dgcurr ->
 		DG.addedge ((cc, eid), n.id, PortSingle vtype) dgcurr
@@ -686,7 +1108,7 @@ let dontOutputNulls dg n =
 			| PortSingle vt ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (srcidpl := Some srcid; srcidbackmappl := Some backmap; vtpl := Some vt)
-			| PortSingleB ->
+			| PortSingleB _ ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (cntrlpl := Some srcid; cntrlbackmappl := Some backmap)
 	) n ();
@@ -717,7 +1139,7 @@ let dontOutputNulls dg n =
 			in
 			DG.nodefoldedges (fun ((IxM cc, _), _, prt) () ->
 				match prt with
-					| PortSingleB ->
+					| PortSingleB _ ->
 						let Some (srcid,_,backmap) = cc.(0)
 						in (condidpl := Some srcid; condbackmappl := Some backmap)
 					| PortTrue _ ->
@@ -772,14 +1194,14 @@ let dontOutputNulls dg n =
 				srcixminv.(ptr) <- idx
 			) srcixm;
 			Some (
-			DG.addedge ((IxM [| Some (notnode.id, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), falseconj.id, PortStrictB) (
-			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), falseconj.id, PortStrictB) (
-			DG.addedge ((IxM [| Some (condid, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), trueconj.id, PortStrictB) (
-			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), trueconj.id, PortStrictB) (
-			DG.addedge ((identityIndexMap condid condnode.outputindextype, NewName.get ()), notnode.id, PortSingleB) (
-			DG.addedge ((IxM [| Some (trueconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), trueoutput.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (notnode.id, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), falseconj.id, PortStrictB true) (
+			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), falseconj.id, PortStrictB true) (
+			DG.addedge ((IxM [| Some (condid, 0, Array.init (Array.length condbackmap) (fun i -> srcbackmap.(srcixminv.(condbackmap.(i)))) ) |], NewName.get ()), trueconj.id, PortStrictB true) (
+			DG.addedge ((IxM [| Some(cntrlid, 0, cntrlbackmap) |], NewName.get ()), trueconj.id, PortStrictB true) (
+			DG.addedge ((identityIndexMap condid condnode.outputindextype, NewName.get ()), notnode.id, PortUSingleB) (
+			DG.addedge ((IxM [| Some (trueconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), trueoutput.id, PortSingleB true) (
 			DG.addedge ((IxM [| Some (truenode.id, 0, Array.init (Array.length truebackmap) (fun i -> srcbackmap.(srcixminv.(truebackmap.(i))))) |], NewName.get ()), trueoutput.id, PortSingle vt) (
-			DG.addedge ((IxM [| Some (falseconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), falseoutput.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (falseconj.id, 0, Array.init (Array.length na.(0)) (fun x -> x)) |], NewName.get ()), falseoutput.id, PortSingleB true) (
 			DG.addedge ((IxM [| Some (falsenode.id, 0, Array.init (Array.length falsebackmap) (fun i -> srcbackmap.(srcixminv.(falsebackmap.(i))))) |], NewName.get ()), falseoutput.id, PortSingle vt) (
 			DG.addnode trueoutput (
 			DG.addnode falseoutput (
@@ -793,27 +1215,406 @@ let dontOutputNulls dg n =
 ;;
 
 let longorOfFalse dg n =
-	if (match n.nkind.nodeintlbl with NNLongOr -> false | _ -> true) then None else
+	if (match n.nkind.nodeintlbl with NNLongOr _ -> false | _ -> true) then None else
 	let hasFalseInput = DG.nodefoldedges (fun ((IxM cc,_),_,_) b ->
 		if b then true else
 		let Some (srcid,_,_) = cc.(0)
 		in
 		let srcn = DG.findnode srcid dg
 		in
-		srcn.nkind.nodeintlbl = NNFalse
+		(match srcn.nkind.nodeintlbl with NNFalse _ -> true | _ -> false)
 	) n false
 	in
 	if not hasFalseInput then None else
 	let nn = { n with
-		nkind = nkFalse;
+		nkind = (match n.nkind.nodeintlbl with NNLongOr b -> if b then nkFalse else nkFalseDT);
 		inputs = PortMap.empty;
 	}
 	in
 	Some (DG.changenode nn dg)
 ;;
 
+let longopOfConst dg n =
+	if (match n.nkind.nodeintlbl with NNLongOr _ | NNLongAnd _ -> false | _ -> true) then None else
+	let falseInputType = DG.nodefoldedges (fun ((IxM cc,_),_,_) b ->
+		if b <> None then b else
+		let Some (srcid,_,_) = cc.(0)
+		in
+		let srcn = DG.findnode srcid dg
+		in
+		(match srcn.nkind.nodeintlbl with NNFalse _ -> Some false | NNTrue _ -> Some true | _ -> None)
+	) n None
+	in
+	match falseInputType with
+		| None -> None
+		| Some fit ->
+			let nn = { n with
+				nkind = (match n.nkind.nodeintlbl with NNLongOr b | NNLongAnd b -> if b then (if fit then nkTrue else nkFalse) else (if fit then nkTrueDT else nkFalseDT));
+				inputs = PortMap.empty;
+			}
+	in
+	Some (DG.changenode nn dg)
+;;
+
+module OptimizeAssocLists = (
+struct
+(*
+Association lists are a GADT "(keytype * valuetype) assoclist" with the following six operations:
+*. 
+
+nil :		(keytype * valuetype) assoclist
+add :		keytype -> valuetype -> (keytype * valuetype) assoclist -> (keytype * valuetype) assoclist
+update : 	keytype -> valuetype -> (keytype * valuetype) assoclist -> (keytype * valuetype) assoclist
+find :		keytype -> (keytype * valuetype) assoclist -> valuetype
+endsWith :	keytype -> (keytype * valuetype) assoclist -> bool /* note that this probably used in the opposite direction in the model */
+contains :	keytype -> (keytype * valuetype) assoclist -> bool
+
+They satisfy the following equalities:
+
+contains(_, nil) = false
+contains(K, add(K', _, L)) = (K == K') || contains(K, L)
+contains(K, update(_, _, L)) = contains(K, L)
+endsWith(_, nil) = false
+endsWith(K, add(K', _, L)) = (K == K')
+endsWith(K, update(_, _, L)) = endsWith(K, L)
+find(_, nil) = bottom
+find(K, add(K', V, L)) = if K == K' then V else find(K, L)
+find(K, update(K', V, L)) = Filter( contains(K, L) ; if K = K' then V else find(K, L) )
+
+There are also rules for equality comparisons between two association lists. As we do not have such comparisons in our models, we omit those
+
+*)
+
+let rec optimize dg n =
+	match n.nkind.nodeintlbl with
+	| NNGeneric (opName, _) when (opName = "find") || (opName = "contains") || (opName == "endsWith") ->
+	begin
+		if opName = "find" then optimizeFind dg n else if opName = "contains" then optimizeContains dg n else optimizeEndswith dg n
+	end
+	| _ -> None
+
+and optimizeContains dg n =
+	let ((IxM cckey, keyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 1))) dg
+	and ((IxM cclist, listedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 2))) dg
+	in
+	let Some (keysrcid,_,keybackmap) = cckey.(0)
+	and Some (listsrcid,_,listbackmap) = cclist.(0)
+	in
+	let listn = DG.findnode listsrcid dg
+	in
+	let IxM listncc = listn.ixtypemap
+	in
+	let Some (_,_,listfwdmap) = listncc.(0)
+	in
+	match listn.nkind.nodeintlbl with
+	| NNGeneric (opName,_) when opName = "nil" ->
+	begin
+		let nnew = {n with nkind = nkFalse; inputs = PortMap.empty; inputindextype = n.outputindextype; ixtypemap = identityIndexMap () n.outputindextype}
+		in
+		Some (DG.changenode nnew dg)
+	end
+	| NNGeneric (opName,_) when opName = "add" ->
+	begin
+		let ((IxM ccprevlist, prevlistedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 3))) dg
+		and ((IxM ccprevkey, prevkeyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 1))) dg
+		in
+		let Some (prevlistid,_,prevlistbackmap) = ccprevlist.(0)
+		and Some (prevkeyid,_,prevkeybackmap) = ccprevkey.(0)
+		in
+		let neqcheck = {
+			id = NewName.get ();
+			nkind = nkIsEq;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and ncontains = {
+			id = NewName.get ();
+			nkind = nkGeneric "contains" true 2;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and ndisj = {
+			id = n.id;
+			nkind = nkOr;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = n.ixtypemap
+		}
+		in
+		let dg' = dg |> (DG.addnode neqcheck) 
+					 |> (DG.addnode ncontains) 
+					 |> (DG.changenode ndisj) 
+					 |> (DG.addedge ((identityIndexMap neqcheck.id n.inputindextype, NewName.get ()), ndisj.id, PortUnstrB true)) 
+					 |> (DG.addedge ((identityIndexMap ncontains.id n.inputindextype, NewName.get ()), ndisj.id, PortUnstrB true)) 
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), neqcheck.id, PortCompare)) 
+					 |> (DG.addedge ((IxM [| Some (prevkeyid, 0, mapCompose [prevkeybackmap; listfwdmap; listbackmap]) |], NewName.get ()), neqcheck.id, PortCompare))
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), ncontains.id, PortOperInput 1))
+					 |> (DG.addedge ((IxM [| Some (prevlistid, 0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], NewName.get ()), ncontains.id, PortOperInput 2))
+		in
+		applyOtherOptimizations dg' [(optimizeContains, ncontains.id); (simplifyEquality, neqcheck.id); (simplifyOr, n.id)]
+	end
+	| NNGeneric (opName,_) when opName = "update" ->
+	begin
+		let ((IxM ccprevlist, prevlistedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 3))) dg
+		in
+		let Some (prevlistid,_,prevlistbackmap) = ccprevlist.(0)
+		in
+		let dg' = DG.addedge ((IxM [| Some (prevlistid,0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], listedgeid), n.id, PortOperInput 2) dg
+		in
+		applyOtherOptimizations dg' [(optimizeContains, n.id)]
+	end
+	| _ -> None
+
+and optimizeEndswith dg n =
+	let ((IxM cckey, keyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 1))) dg
+	and ((IxM cclist, listedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 2))) dg
+	in
+	let Some (keysrcid,_,keybackmap) = cckey.(0)
+	and Some (listsrcid,_,listbackmap) = cclist.(0)
+	in
+	let listn = DG.findnode listsrcid dg
+	in
+	let IxM listncc = listn.ixtypemap
+	in
+	let Some (_,_,listfwdmap) = listncc.(0)
+	in
+	match listn.nkind.nodeintlbl with
+	| NNGeneric (opName,_) when opName = "nil" ->
+	begin
+		let nnew = {n with nkind = nkFalse; inputs = PortMap.empty; inputindextype = n.outputindextype; ixtypemap = identityIndexMap () n.outputindextype}
+		in
+		Some (DG.changenode nnew dg)
+	end
+	| NNGeneric (opName,_) when opName = "add" ->
+	begin
+		let ((IxM ccprevkey, prevkeyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 1))) dg
+		in
+		let Some (prevkeyid,_,prevkeybackmap) = ccprevkey.(0)
+		in
+		let neqcheck = {
+			id = n.id;
+			nkind = nkIsEq;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = n.ixtypemap
+		}
+		in
+		let dg' = dg |> (DG.changenode neqcheck) 
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), neqcheck.id, PortCompare)) 
+					 |> (DG.addedge ((IxM [| Some (prevkeyid, 0, mapCompose [prevkeybackmap; listfwdmap; listbackmap]) |], NewName.get ()), neqcheck.id, PortCompare))
+		in
+		applyOtherOptimizations dg' [(simplifyEquality, neqcheck.id)]
+	end
+	| NNGeneric (opName,_) when opName = "update" ->
+	begin
+		let ((IxM ccprevlist, prevlistedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 3))) dg
+		in
+		let Some (prevlistid,_,prevlistbackmap) = ccprevlist.(0)
+		in
+		let dg' = DG.addedge ((IxM [| Some (prevlistid,0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], listedgeid), n.id, PortOperInput 2) dg
+		in
+		applyOtherOptimizations dg' [(optimizeEndswith, n.id)]
+	end
+	| _ -> None
+
+and optimizeFind dg n =
+	let ((IxM cckey, keyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 1))) dg
+	and ((IxM cclist, listedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 2))) dg
+	in
+	let Some (keysrcid,_,keybackmap) = cckey.(0)
+	and Some (listsrcid,_,listbackmap) = cclist.(0)
+	in
+	let listn = DG.findnode listsrcid dg
+	in
+	let IxM listncc = listn.ixtypemap
+	in
+	let Some (_,_,listfwdmap) = listncc.(0)
+	in
+	match listn.nkind.nodeintlbl with
+	| NNGeneric (opName,_) when opName = "nil" ->
+	begin
+		let nnew = {n with nkind = nkError; inputs = PortMap.empty; inputindextype = n.outputindextype; ixtypemap = identityIndexMap () n.outputindextype}
+		in
+		Some (DG.changenode nnew dg)
+	end
+	| NNGeneric (opName,_) when opName = "add" ->
+	begin
+		let ((IxM ccprevlist, prevlistedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 3))) dg
+		and ((IxM ccprevkey, prevkeyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 1))) dg
+		and ((IxM ccvalue, valueedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 2))) dg
+		in
+		let Some (prevlistid,_,prevlistbackmap) = ccprevlist.(0)
+		and Some (prevkeyid,_,prevkeybackmap) = ccprevkey.(0)
+		and Some (valueid,_,valuebackmap) = ccvalue.(0)
+		in
+		let neqcheck = {
+			id = NewName.get ();
+			nkind = nkIsEq;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and nfind = {
+			id = NewName.get ();
+			nkind = nkGeneric "find" false 2;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and nite = {
+			id = n.id;
+			nkind = nkITE VAny;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = n.ixtypemap
+		}
+		in
+		let dg' = dg |> (DG.addnode neqcheck) 
+					 |> (DG.addnode nfind) 
+					 |> (DG.changenode nite) 
+					 |> (DG.addedge ((identityIndexMap neqcheck.id n.inputindextype, NewName.get ()), nite.id, PortSingleB true)) 
+					 |> (DG.addedge ((identityIndexMap nfind.id n.inputindextype, NewName.get ()), nite.id, PortFalse VAny)) 
+					 |> (DG.addedge ((IxM [| Some (valueid, 0, mapCompose [valuebackmap; listfwdmap; listbackmap]) |], NewName.get ()), nite.id, PortTrue VAny)) 
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), neqcheck.id, PortCompare)) 
+					 |> (DG.addedge ((IxM [| Some (prevkeyid, 0, mapCompose [prevkeybackmap; listfwdmap; listbackmap]) |], NewName.get ()), neqcheck.id, PortCompare))
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), nfind.id, PortOperInput 1))
+					 |> (DG.addedge ((IxM [| Some (prevlistid, 0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], NewName.get ()), nfind.id, PortOperInput 2))
+		in
+		applyOtherOptimizations dg' [(optimizeFind, nfind.id); (simplifyEquality, neqcheck.id); (getRidOfITE, nite.id)]
+	end
+	| NNGeneric (opName,_) when opName = "update" ->
+	begin
+		let ((IxM ccprevlist, prevlistedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 3))) dg
+		and ((IxM ccprevkey, prevkeyedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 1))) dg
+		and ((IxM ccvalue, valueedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg listsrcid (PortOperInput 2))) dg
+		in
+		let Some (prevlistid,_,prevlistbackmap) = ccprevlist.(0)
+		and Some (prevkeyid,_,prevkeybackmap) = ccprevkey.(0)
+		and Some (valueid,_,valuebackmap) = ccvalue.(0)
+		in
+		let neqcheck = {
+			id = NewName.get ();
+			nkind = nkIsEq;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and nfind = {
+			id = NewName.get ();
+			nkind = nkGeneric "find" false 2;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and nite = {
+			id = NewName.get ();
+			nkind = nkITE VAny;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and ncontains = {
+			id = NewName.get ();
+			nkind = nkGeneric "contains" true 2;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.inputindextype;
+			ixtypemap = identityIndexMap () n.inputindextype
+		}
+		and nfilter = {
+			id = n.id;
+			nkind = nkFilter VAny;
+			inputs = PortMap.empty;
+			inputindextype = n.inputindextype;
+			outputindextype = n.outputindextype;
+			ixtypemap = n.ixtypemap
+		}
+		in
+		let dg' = dg |> (DG.addnode neqcheck) 
+					 |> (DG.addnode nfind) 
+					 |> (DG.addnode nite)
+					 |> (DG.addnode ncontains)
+					 |> (DG.changenode nfilter)
+					 |> (DG.addedge ((identityIndexMap neqcheck.id n.inputindextype, NewName.get ()), nite.id, PortSingleB true)) 
+					 |> (DG.addedge ((identityIndexMap nfind.id n.inputindextype, NewName.get ()), nite.id, PortFalse VAny)) 
+					 |> (DG.addedge ((IxM [| Some (valueid, 0, mapCompose [valuebackmap; listfwdmap; listbackmap]) |], NewName.get ()), nite.id, PortTrue VAny)) 
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), neqcheck.id, PortCompare)) 
+					 |> (DG.addedge ((IxM [| Some (prevkeyid, 0, mapCompose [prevkeybackmap; listfwdmap; listbackmap]) |], NewName.get ()), neqcheck.id, PortCompare))
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), nfind.id, PortOperInput 1))
+					 |> (DG.addedge ((IxM [| Some (prevlistid, 0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], NewName.get ()), nfind.id, PortOperInput 2))
+					 |> (DG.addedge ((IxM cckey, NewName.get ()), ncontains.id, PortOperInput 1))
+					 |> (DG.addedge ((IxM [| Some (prevlistid, 0, mapCompose [prevlistbackmap; listfwdmap; listbackmap]) |], NewName.get ()), ncontains.id, PortOperInput 2))
+					 |> (DG.addedge ((identityIndexMap ncontains.id n.inputindextype, NewName.get ()), nfilter.id, PortSingleB true))
+					 |> (DG.addedge ((identityIndexMap nite.id n.inputindextype, NewName.get ()), nfilter.id, PortSingle VAny))
+		in
+		applyOtherOptimizations dg' [(optimizeFind, nfind.id); (simplifyEquality, neqcheck.id); (getRidOfITE, nite.id); (optimizeContains, ncontains.id); (simplifyFilter, nfilter.id)]
+	end
+	| _ -> None
+
+and applyOtherOptimizations dg optList =
+	Some (List.fold_left (fun dgcurr (simpfun, nid) ->
+		let n = DG.findnode nid dgcurr
+		in
+		match simpfun dgcurr n with
+		| None -> dgcurr
+		|Some dg' -> dg'
+	) dg optList)
+
+and getRidOfITE dg n =
+	let ((IxM cctrue, trueedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortTrue VAny))) dg
+	and ((IxM ccfalse, falseedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortFalse VAny))) dg
+	and ((IxM cccond, condedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortSingleB true))) dg
+	in
+	let Some (srctrueid,_,truebm) = cctrue.(0)
+	and Some (srcfalseid,_,falsebm) = ccfalse.(0)
+	and Some (srccondid,_,condbm) = cccond.(0)
+	in
+	let nnot = {
+		nkind = nkNot;
+		id = NewName.get ();
+		inputs = PortMap.empty;
+		inputindextype = n.inputindextype;
+		outputindextype = n.inputindextype;
+		ixtypemap = identityIndexMap () n.inputindextype
+	}
+	and nmerge = {n with nkind = nkMerge VAny; inputs = PortMap.empty}
+	in
+	let ntruefilter = {nnot with nkind = nkFilter VAny; id = NewName.get ()}
+	and nfalsefilter = {nnot with nkind = nkFilter VAny; id = NewName.get ()}
+	in
+	let dg' = dg |> DG.addnode nnot
+				 |> DG.addnode ntruefilter
+				 |> DG.addnode nfalsefilter
+				 |> DG.changenode nmerge
+				 |> DG.addedge ((IxM cccond, NewName.get ()), nnot.id, PortUSingleB)
+				 |> DG.addedge ((IxM cctrue, NewName.get ()), ntruefilter.id, PortSingle VAny)
+				 |> DG.addedge ((IxM cccond, NewName.get ()), ntruefilter.id, PortSingleB true)
+				 |> DG.addedge ((identityIndexMap nnot.id n.inputindextype, NewName.get ()), nfalsefilter.id, PortSingleB true)
+				 |> DG.addedge ((IxM ccfalse, NewName.get ()), nfalsefilter.id, PortSingle VAny)
+				 |> DG.addedge ((identityIndexMap ntruefilter.id n.inputindextype, NewName.get ()), nmerge.id, PortMulti VAny)
+				 |> DG.addedge ((identityIndexMap nfalsefilter.id n.inputindextype, NewName.get ()), nmerge.id, PortMulti VAny)
+	in
+	applyOtherOptimizations dg' [(notOfConstant, nnot.id); (simplifyFilter, ntruefilter.id); (simplifyFilter, nfalsefilter.id); (simplifyMerge, nmerge.id)]
+
+end :
+sig
+	val optimize : DG.t -> nodetype -> DG.t option
+end);;
+
 let simplifyArithmetic dg =
-	let funchain = [simplifyCoalesce; simplifyAnd; simplifyOr; longorOfFalse; additionToSum; simplifyAddition; simplifyMax; simplifyMerge; dontOutputNulls]
+	let funchain = [simplifyCoalesce; simplifyError; simplifyEquality; contractNoContract; notOfConstant; simplifyFilter; simplifyAnd; simplifyOr; longopOfConst; additionToSum; simplifyDecrypt; simplifyABDecrypt; simplifyAddition; simplifyMax; simplifyMerge; OptimizeAssocLists.optimize; dontOutputNulls]
 	in
 	TopolSorter.fold (fun nid dgnew ->
 		List.fold_left (fun dgcurr simpfun ->
@@ -872,7 +1673,7 @@ let iseqToDimEqNode dg n =
 	List.fold_right (fun (dimeqn, backmap) dgcurr ->
 		let dg1 = DG.addnode dimeqn dgcurr
 		in
-		DG.addedge ((IxM [| Some (dimeqn.id, 0, backmap) |], NewName.get ()),n.id, PortStrictB) dg1
+		DG.addedge ((IxM [| Some (dimeqn.id, 0, backmap) |], NewName.get ()),n.id, PortStrictB true) dg1
 	) newInps (DG.changenode nnew dg)
 ;;
 
@@ -916,8 +1717,9 @@ let iseqAddDimEqNode dg n =
 		DG.nodefoldoutedges dg (fun ((IxM cc1, eid1), nOutId1, _) () ->
 			let nOut = DG.findnode nOutId1.id !changedg
 			in
-			if nOut.nkind.nodeintlbl <> NNAnd then () else
+			if (match nOut.nkind.nodeintlbl with NNAnd _ -> false | _ -> true) then () else
 			let (AITT nOutA) = nOut.inputindextype
+			and NNAnd isVBoolean = nOut.nkind.nodeintlbl
 			in
 			DG.nodefoldoutedges dg (fun ((IxM cc2, eid2), nOutId2, _) () ->
 				if (nOutId1.id = nOutId2.id) && ((NewName.to_string eid1) < (NewName.to_string eid2)) then
@@ -952,7 +1754,7 @@ let iseqAddDimEqNode dg n =
 						}
 						in
 						changedg :=
-							DG.addedge ((IxM [| Some (eqdimnode.id, 0, [| d1; d2 |]) |], NewName.get ()), nOut.id, PortStrictB)
+							DG.addedge ((IxM [| Some (eqdimnode.id, 0, [| d1; d2 |]) |], NewName.get ()), nOut.id, PortStrictB isVBoolean)
 							(DG.addnode eqdimnode !changedg)
 					) eqsList
 				end
@@ -1042,11 +1844,13 @@ let collectReducedDims dg n =
 
 
 let reduceOneAndDimension dg n =
-	if n.nkind.nodeintlbl <> NNAnd then None else
+	if (match n.nkind.nodeintlbl with NNAnd _ -> false | _ -> true) then None else
+	let NNAnd isVBoolean = n.nkind.nodeintlbl
+	in
 	let (outpNodeIds, onlyOutputSuccs, inputDescription) = DG.nodefoldoutedges dg (fun ((_,_), tgtn, prt) (currIds, currFlag, currIDesc) ->
 		if not currFlag then (IdtSet.empty, false, RLSet.empty) else
 		match tgtn.nkind.nodeintlbl, prt with
-			| NNOutput iDesc, PortSingleB -> (IdtSet.add tgtn.id currIds, true, RLSet.union iDesc currIDesc)
+			| NNOutput iDesc, PortSingleB _ -> (IdtSet.add tgtn.id currIds, true, RLSet.union iDesc currIDesc)
 			| _,_ -> (IdtSet.empty, false, RLSet.empty)
 	) n (IdtSet.empty, true, RLSet.empty)
 	in
@@ -1075,7 +1879,7 @@ let reduceOneAndDimension dg n =
 			ii := !ii + 1
 		done;
 		let genericDimReducer = {
-			nkind = nkEqualDims VBoolean eqDimList;
+			nkind = nkEqualDims (if isVBoolean then VBoolean else VNaeloob) eqDimList;
 			id = n.id;
 			inputs = PortMap.empty;
 			inputindextype = n.inputindextype;
@@ -1083,16 +1887,12 @@ let reduceOneAndDimension dg n =
 			ixtypemap = IxM [| Some ((), 0, equalDimsIxmap) |];
 		}
 		and newAndNode = {
-			nkind = nkAnd;
+			nkind = if isVBoolean then nkAnd else nkAndDT;
 			id = NewName.get ();
 			inputs = PortMap.empty;
 			inputindextype = AITT [| outpixt |];
 			outputindextype = AITT [| outpixt |];
 			ixtypemap = IxM [| Some ((), 0, Array.init survivingDimsNum (fun x -> x)) |];
-		}
-		and oldAndNode = {n with
-			nkind = nkId VBoolean;
-			inputs = PortMap.empty;
 		}
 		in
 		let reduceOutputNode dg0 nOut =
@@ -1102,7 +1902,7 @@ let reduceOneAndDimension dg n =
 			in
 			DG.nodefoldedges (fun ((IxM cc,_),_, prt) () ->
 				match prt with
-					| PortSingleB -> controlEdgePl := cc.(0)
+					| PortSingleB _ -> controlEdgePl := cc.(0)
 					| PortSingle vt -> (dataEdgePl := cc.(0); dataEdgeTypePl := Some vt)
 			) nOut ();
 			let Some (_, _, oldEdgeBM) = !controlEdgePl
@@ -1157,7 +1957,7 @@ let reduceOneAndDimension dg n =
 			in
 (*			DG.addedge ((IxM [| Some (srcid, 0, Array.init (Array.length dataEdgeBM) (fun x -> oldToNewDims.(dataEdgeBM.(x)))) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (  *)
 			DG.addedge ((IxM [| Some (srcid, 0, dataEdgeBM) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (
-			DG.addedge ((IxM [| Some (newAndNode.id, 0, Array.init (Array.length outpixt) (fun x -> oldToNewDims.(oldEdgeBM.(equalDimsIxmap.(x))))) |], NewName.get()), newOutpNode.id, PortSingleB) (
+			DG.addedge ((IxM [| Some (newAndNode.id, 0, Array.init (Array.length outpixt) (fun x -> oldToNewDims.(oldEdgeBM.(equalDimsIxmap.(x))))) |], NewName.get()), newOutpNode.id, PortSingleB true) (
 			DG.addedge ((IxM [| Some (dataDimReducer.id, 0, Array.init (Array.length thisOutpIxt) (fun x -> x)) |], NewName.get ()), newOutpNode.id, PortSingle dataVt) (
 			DG.addnode newOutpNode (
 			DG.addnode dataDimReducer dg0))))
@@ -1169,7 +1969,7 @@ let reduceOneAndDimension dg n =
 			let dimreducn = {genericDimReducer with id = NewName.get ();}
 			in
 			DG.addedge ((cc, NewName.get ()), dimreducn.id, PortSingle VBoolean)
-				(DG.addedge ((IxM [| Some (dimreducn.id, 0,  Array.init survivingDimsNum (fun x -> x))  |], NewName.get ()), newAndNode.id, PortStrictB)
+				(DG.addedge ((IxM [| Some (dimreducn.id, 0,  Array.init survivingDimsNum (fun x -> x))  |], NewName.get ()), newAndNode.id, PortStrictB isVBoolean)
 				(DG.addnode dimreducn dgcurr))
 		) n dg1
 		in
@@ -1186,14 +1986,16 @@ let reduceOneAndDimension dg n =
 let reduceAndDimension dg = DG.foldnodes (fun nold dgcurr -> match reduceOneAndDimension dgcurr (DG.findnode nold.id dgcurr) with None -> dgcurr | Some dg' -> dg') dg dg;;
 
 let reduceOneLongorDimension dg n =
-	if n.nkind.nodeintlbl <> NNLongOr then None else
+	if (match n.nkind.nodeintlbl with NNLongOr _ -> false | _ -> true) then None else
+	let NNLongOr isVBoolean = n.nkind.nodeintlbl
+	in
 	let (andid, albackmap, aledgeid) =
 		let srcidpl = ref None
 		and albackmappl = ref None
 		and aledgeidpl = ref None
 		in
 		DG.nodefoldedges (fun ((IxM cc, eid),_,prt) () ->
-			if prt = PortSingleB then
+			if prt = PortSingleB isVBoolean then
 			begin
 				let Some (srcid',_,albackmap') = cc.(0)
 				in
@@ -1210,7 +2012,7 @@ let reduceOneLongorDimension dg n =
 	in
 	let andnode = DG.findnode andid dg
 	in
-	if andnode.nkind.nodeintlbl <> NNAnd then None else
+	if andnode.nkind.nodeintlbl <> NNAnd isVBoolean then None else
 	let AITT a = andnode.inputindextype
 	and AITT b = andnode.outputindextype
 	and AITT la = n.inputindextype
@@ -1276,7 +2078,7 @@ let reduceOneLongorDimension dg n =
 		ii := !ii + 1
 	done;
 	let genericDimReducer = {
-		nkind = nkEqualDims VBoolean eqDimList;
+		nkind = nkEqualDims (if isVBoolean then VBoolean else VNaeloob) eqDimList;
 		id = NewName.get ();
 		inputs = PortMap.empty;
 		inputindextype = n.inputindextype;
@@ -1286,7 +2088,7 @@ let reduceOneLongorDimension dg n =
 	in
 	Some (
 	DG.addedge ((IxM [| Some (andid, 0, albackmap) |], NewName.get ()), genericDimReducer.id, PortSingle VBoolean) (
-	DG.addedge ((IxM [| Some (genericDimReducer.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingleB) (
+	DG.addedge ((IxM [| Some (genericDimReducer.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingleB isVBoolean) (
 	DG.addnode genericDimReducer (
 	DG.remedge aledgeid dg))))
 	end
@@ -1518,11 +2320,11 @@ let moveAllOverEqualDims dg =
 		) dgNow dgNow;
 		currdg := removeDead !currdg;
 		if printGraphs then
-		begin
+		begin (*
 			let oc = open_out ("moveOver_" ^ (string_of_int !iterNum) ^ ".dot")
 			in
 			GrbPrint.printgraph oc !currdg;
-			close_out oc;
+			close_out oc; *)
 			iterNum := !iterNum + 1
 		end
 	done;
@@ -1544,7 +2346,7 @@ let findPotentiallyEqualDims dg n =
 	in
 	let dimclass = ClassRepr.make (Array.length a.(0))
 	in
-	if (match n.nkind.nodeintlbl with NNAnd -> false | _ -> true) then dimclass else
+	if (match n.nkind.nodeintlbl with NNAnd _ -> false | _ -> true) then dimclass else
 	let fwdmap = Array.make (Array.length a.(0)) 0
 	in
 	for i = 0 to (Array.length a.(0)) - 1 do
@@ -1583,7 +2385,7 @@ let removeOneOutputControlDims dg n allDimclass =
 	in
 	DG.nodefoldedges (fun ((IxM cc, eid),_, prt) () ->
 		match prt with
-			| PortSingleB -> (controlEdgePl := cc.(0); controlEdgeIdPl := Some eid)
+			| PortSingleB true -> (controlEdgePl := cc.(0); controlEdgeIdPl := Some eid)
 			| PortSingle vt -> (dataEdgePl := cc.(0); dataEdgeTypePl := Some vt; dataEdgeIdPl := Some eid)
 	) n ();
 	let Some (andnodeid, _, oldEdgeBM) = !controlEdgePl
@@ -1648,7 +2450,7 @@ let removeOneOutputControlDims dg n allDimclass =
 	in
 	DG.addedge ((IxM [| Some (dataDimReducer.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingle dataVt) (
 	DG.addedge ((IxM [| Some (srcid, 0, dataEdgeBM) |], NewName.get ()), dataDimReducer.id, PortSingle dataVt) (
-	DG.addedge ((IxM [| Some (dimReducer.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingleB) (
+	DG.addedge ((IxM [| Some (dimReducer.id, 0, equalDimsIxmap) |], NewName.get ()), n.id, PortSingleB true) (
 	DG.addedge ((IxM [| Some (andnodeid, 0, oldEdgeBM) |], NewName.get ()), dimReducer.id, PortSingle VBoolean) (
 	DG.addnode dataDimReducer (
 	DG.addnode dimReducer (
@@ -1697,7 +2499,7 @@ let mkSingleOutputPerComp dg n =
 		(RLMap.add src newOutpNode.id outCurr, RLMap.add src newOrNode.id orCurr,
 			dgcurr |> DG.addnode newOutpNode |> DG.addnode newOrNode |>
 				DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingle outType) |>
-				DG.addedge ((identityIndexMap newOrNode.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingleB)
+				DG.addedge ((identityIndexMap newOrNode.id n.outputindextype, NewName.get ()), newOutpNode.id, PortSingleB true)
 		)
 	) outSource (RLMap.empty, RLMap.empty, dg)
 	in
@@ -1710,7 +2512,7 @@ let mkSingleOutputPerComp dg n =
 				and cntrBackMapPl = ref None
 				in
 				let () = DG.nodefoldedges (fun ((IxM cc', _), _, prt') () ->
-					if prt' = PortSingleB then begin
+					if prt' = PortSingleB true then begin
 						let Some (id, _, bm) = cc'.(0)
 						in
 						cntrNodeIdPl := Some id;
@@ -1745,8 +2547,8 @@ let mkSingleOutputPerComp dg n =
 					}
 					in
 					dgxcurr |> DG.addnode longornode |>
-						DG.addedge ((identityIndexMap cntrNodeId longornode.inputindextype, NewName.get ()), longornode.id, PortSingleB) |>
-						DG.addedge ((identityIndexMap longornode.id longornode.outputindextype, NewName.get ()), RLMap.find src orNodes, PortUnstrB)
+						DG.addedge ((identityIndexMap cntrNodeId longornode.inputindextype, NewName.get ()), longornode.id, PortSingleB true) |>
+						DG.addedge ((identityIndexMap longornode.id longornode.outputindextype, NewName.get ()), RLMap.find src orNodes, PortUnstrB true)
 					) thisSrc dgcurr
 				in
 				DG.remnode nout.id dgnext
@@ -1766,8 +2568,19 @@ let singleOutputPerValue dg =
 	) dg dg
 ;;
 
+
+(*
 let dimFunDepsToDimEqs dg =
 	let maxAllowedLen = 5
+	in
+	let maxAddrGenLevel = DG.foldnodes (fun n mm ->
+		match n.nkind.nodeintlbl with
+		| NNAddrGen (genid, gendim, _) ->
+			let foundMax = try IdtMap.find genid mm with Not_found -> (-1)
+			in
+			if gendim > foundMax then IdtMap.add genid gendim mm else mm
+		| _ -> mm
+	) dg IdtMap.empty
 	in
 	let foundDeps = DG.foldnodes (fun n res ->
 		let (AITT na) = n.inputindextype
@@ -1781,7 +2594,7 @@ let dimFunDepsToDimEqs dg =
 	in
 	(* initialize deps *)
 	DG.foldnodes (fun n () ->
-		if (match n.nkind.nodeintlbl with NNIsEq -> false | _ -> true) then () else
+		if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then () else
 		let possTakeDimDim = ref None
 		and possAddrFunDimAndName = ref None
 		in
@@ -1796,7 +2609,7 @@ let dimFunDepsToDimEqs dg =
 				in
 				if (Array.length srcnb.(0)) = 1 then possTakeDimDim := Some backmap.(0) else ()
 			| NNAddrGen (genid, gendim, _) ->
-				possAddrFunDimAndName := Some (backmap.(gendim), genid, gendim);
+				if ((Array.length backmap) = 1) && (gendim = IdtMap.find genid maxAddrGenLevel) then possAddrFunDimAndName := Some (backmap.(0), genid, gendim) else ()
 			| _ -> ()
 		) n ();
 		if (match !possTakeDimDim, !possAddrFunDimAndName with | None,_ | _,None -> true | _,_ -> false) then () else
@@ -1933,8 +2746,8 @@ let dimFunDepsToDimEqs dg =
 		anyChanges := x || y
 	done;
 	DG.foldnodes (fun n currdg ->
-		if (match n.nkind.nodeintlbl with | NNOutput _ -> false | NNAnd -> true | _ -> true) then currdg else
-		let (dgref, newCtrlNode) = if n.nkind.nodeintlbl = NNAnd then ((ref dg), n) else
+		if (match n.nkind.nodeintlbl with | NNOutput _ -> false | NNAnd _ -> true | _ -> true) then currdg else
+		let (dgref, newCtrlNode) = if (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then ((ref dg), n) else
 		begin
 			let possCtrlSrcId = ref None
 			and possCtrlMap = ref None
@@ -1942,7 +2755,7 @@ let dimFunDepsToDimEqs dg =
 			in
 			DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
 				match prt with
-					| PortSingleB -> begin
+					| PortSingleB _ -> begin
 						let Some (srcid,_,backmap) = cc.(0)
 						in
 						possCtrlSrcId := Some srcid;
@@ -1966,7 +2779,7 @@ let dimFunDepsToDimEqs dg =
 				inputs = PortMap.empty;
 			}
 			in
-			let dgref = ref (DG.addedge ((IxM [| Some (ctrlSrcId ,0, ctrlMap) |], NewName.get ()), newCtrlNode.id, PortStrictB) (DG.addedge ((identityIndexMap newCtrlNode.id n.inputindextype, ctrlEdgeId), n.id, PortSingleB) (DG.addnode newCtrlNode currdg)))
+			let dgref = ref (DG.addedge ((IxM [| Some (ctrlSrcId ,0, ctrlMap) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addedge ((identityIndexMap newCtrlNode.id n.inputindextype, ctrlEdgeId), n.id, PortSingleB true) (DG.addnode newCtrlNode currdg)))
 			in
 			(dgref, newCtrlNode)
 		end
@@ -1991,12 +2804,181 @@ let dimFunDepsToDimEqs dg =
 						inputs = PortMap.empty;
 					}
 					in
-					dgref := DG.addedge ((IxM [| Some (dimEqNode.id, 0, [|i;j|]) |], NewName.get ()), newCtrlNode.id, PortStrictB) (DG.addnode dimEqNode !dgref)
+					dgref := DG.addedge ((IxM [| Some (dimEqNode.id, 0, [|i;j|]) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addnode dimEqNode !dgref)
 				end else ()
 			done
 		done;
 		!dgref
 	) dg dg
+;;
+*)
+
+let compareDiffFunDeps dg =
+	let isComparison n =
+		if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then None else
+		let posssrvdimsrcpl = ref None
+		and possaddgensrcpl = ref None
+		and clidimsrcpl = ref IntMap.empty
+		and posssrvdimbmpl = ref None
+		in
+		DG.nodefoldedges (fun ((IxM scc, eid),_,_) () ->
+			let Some (srcid, _, srcbm) = scc.(0)
+			in
+			let srcn = DG.findnode srcid dg
+			in
+			match srcn.nkind.nodeintlbl with
+				| NNAddrGen _ ->
+				begin
+					DG.nodefoldedges (fun ((IxM sscc, _),_,PortOperInput kk) () ->
+						let Some (ssrcid, _, _) = sscc.(0)
+						in
+						let ssrcn = DG.findnode ssrcid dg
+						in
+						match ssrcn.nkind.nodeintlbl with
+							| NNTakeDim _ -> (possaddgensrcpl := Some srcn; clidimsrcpl := IntMap.add kk (ssrcn, srcbm) !clidimsrcpl)
+							| _ -> ()
+					) srcn ()
+				end
+				| NNTakeDim  _ ->
+				begin
+					posssrvdimsrcpl := Some srcn;
+					posssrvdimbmpl := Some srcbm
+				end
+				| _ -> ()
+		) n ();
+		match (!posssrvdimsrcpl, !possaddgensrcpl, !posssrvdimbmpl) with
+		| (Some srvdimsrc, Some addgensrc, Some srvdimbm) ->
+		begin
+			let NNTakeDim srvdimname = srvdimsrc.nkind.nodeintlbl
+			and NNAddrGen (addrfunname, addrfunnum, inpnum) = addgensrc.nkind.nodeintlbl
+			and x = srvdimbm.(0)
+			and clidimsrc = !clidimsrcpl
+			in
+			let clidimscoords = Array.init inpnum (fun y ->
+				let (ssrcn, ssbackmap) = IntMap.find (y+1) clidimsrc
+				in
+				let NNTakeDim clidimname = ssrcn.nkind.nodeintlbl
+				in
+				let z = ssbackmap.(0)
+				in (clidimname, z)
+			)
+			in
+			Some (clidimscoords, addrfunname, addrfunnum, srvdimname, x)
+		end
+		| _ -> None
+	in
+	let propagateOverEdge allComps eid = (* TODO: make sure things do not propagate, if dimensions are contracted *)
+		let ((IxM cc, _), ntgt, prt) = DG.findedge eid dg
+		in
+		if not (PortOptSet.mem POptStrict (portdesc prt).inputopts) then None else
+		let Some (srcid, _, backmap) = cc.(0)
+		in
+		let srcComps = try IdtMap.find srcid allComps with Not_found -> []
+		and nsrc = DG.findnode srcid dg
+		in
+		let (IxM ncc) = nsrc.ixtypemap
+		and (AITT na) = nsrc.inputindextype
+		and (AITT nb) = nsrc.outputindextype
+		in
+		let Some ((),_,fwdmap) = ncc.(0)
+		in
+		let invfwdmap =
+			let res = Array.make (Array.length na.(0)) (-1)
+			in
+			for i = 0 to ((Array.length fwdmap) - 1) do
+				res.(fwdmap.(i)) <- i
+			done;
+			res
+		in
+		let propagateOneDim x =
+			let xAtSrcB = invfwdmap.(x)
+			in
+			if xAtSrcB = (-1) then None else
+			Some backmap.(xAtSrcB)
+		in
+		let propagations = List.fold_right (fun (clidimscoords, addrfunname, addrfunnum, srvdimname, x) ll ->
+			let bailout = ref false
+			in
+			let clidimscoordsAtTgtA = Array.map (fun (clidimname,y) -> (clidimname, (match propagateOneDim y with Some x -> x | None -> (bailout := true; (-1))))) clidimscoords
+			and xAtTgtA = match propagateOneDim x with Some z -> z | None -> (bailout := true; (-1))
+			in
+			if !bailout then ll else
+			(clidimscoordsAtTgtA, addrfunname, addrfunnum, srvdimname, xAtTgtA) :: ll
+		) srcComps []
+		in
+		let tgtComps = try IdtMap.find ntgt.id allComps with Not_found -> []
+		in
+		let (ntgtComps, changes) = List.fold_right (fun tuple (ll,bb) ->
+			if List.mem tuple ll then (ll,bb) else (tuple :: ll, true)
+		) propagations (tgtComps, false)
+		in
+		if changes then Some (IdtMap.add ntgt.id ntgtComps allComps) else None
+	in
+	let initComps = DG.foldnodes (fun n mm ->
+		match isComparison n with
+			| None -> mm
+			| Some tuple -> IdtMap.add n.id [tuple] mm
+	) dg IdtMap.empty
+	in
+	let changes = ref true
+	and currComps = ref initComps
+	in
+	while !changes do
+		changes := false;
+		DG.foldedges (fun ((_,eid),_,_) () ->
+			match propagateOverEdge !currComps eid with
+				| None -> ()
+				| Some newComps ->
+				begin
+					currComps := newComps;
+					changes := true
+				end
+		) dg ()
+	done;
+	let oc = open_out "diffundeps"
+	in
+	IdtMap.iter (fun nid props ->
+		List.iter (fun (clidimscoords, addrfunname, addrfunnum, srvdimname, x) ->
+			output_string oc ("Node no. " ^ (NewName.to_string nid) ^ " compares " ^ srvdimname ^ " at dim no. " ^ (string_of_int x) ^ " with Addr" ^ (NewName.to_string addrfunname) ^ "(" ^ (string_of_int addrfunnum) ^ ") applied to");
+			Array.iteri (fun idx (clidimname,coord) ->
+				output_string oc (" " ^ (string_of_int idx ^ ": (" ^ clidimname ^ "," ^ (string_of_int coord) ^ ")"))
+			) clidimscoords;
+			output_string oc "\n"
+		) props
+	) !currComps;
+	close_out oc;
+	let bottomNodes = IdtMap.fold (fun nid props ss ->
+		if List.exists (fun (clidimscoords, addrfunname, addrfunnum, srvdimname, x) ->
+			List.exists (fun (clidimscoords2, addrfunname2, addrfunnum2, srvdimname2, x2) ->
+				(srvdimname = srvdimname2) && (x = x2) && (
+					(
+						((Array.length clidimscoords) = (Array.length clidimscoords2))
+						&&
+						(let samecoords = ref true
+						 and diffnames = ref false
+						 in
+						 for i = 0 to (Array.length clidimscoords) - 1 do
+						 	let (clidimname,clicoord) = clidimscoords.(i)
+						 	and (clidimname2,clicoord2) = clidimscoords2.(i)
+						 	in
+						 	(if clidimname <> clidimname2 then diffnames := true);
+						 	(if clicoord <> clicoord2 then samecoords := false)
+						 done;
+						 !samecoords && !diffnames
+						)
+					) || (addrfunname <> addrfunname2) || (addrfunnum <> addrfunnum2) )
+			) props
+		) props
+		then IdtSet.add nid ss else ss
+	) !currComps IdtSet.empty
+	in
+	IdtSet.fold (fun nid dgcurr ->
+		let n = DG.findnode nid dgcurr
+		in
+		let nnew = {n with nkind = if n.nkind.outputtype = VBoolean then nkFalse else nkError; inputs = PortMap.empty}
+		in
+		DG.changenode nnew dgcurr
+	) bottomNodes dg
 ;;
 	
 let findDataEdges dg =
@@ -2034,28 +3016,12 @@ let findDataEdges dg =
 				DG.nodefoldedges (fun ((_,eid'),_,prt) () ->
 					if IdtSet.mem eid !res then
 					begin
-						if prt = PortSingleB then () else relevantEdge eid'
+						if prt = PortSingleB true then () else relevantEdge eid'
 					end
 					else if IdtSet.mem eid !combineedges then
 					begin
-						if prt = PortSingleB then () else markCombineEdge eid'
+						if prt = PortSingleB true then () else markCombineEdge eid'
 					end
-				) nsrc ()
-			| NNLongUpdCombine _ ->
-				DG.nodefoldedges (fun ((_,eid'),_,prt) () ->
-					if IdtSet.mem eid !res then relevantEdge eid'
-					else if IdtSet.mem eid !combineedges then markCombineEdge eid'
-				) nsrc ()
-			| NNUpdCombine _ ->
-				DG.nodefoldedges (fun ((IxM cc,eid'),_,prt) () ->
-					let Some (ppid,_,_) = cc.(0)
-					in
-					let ppn = DG.findnode ppid dg
-					in
-					if IdtSet.mem eid !combineedges then markCombineEdge eid'
-					else if (IdtSet.mem eid !res) then (
-						if (match ppn.nkind.nodeintlbl with NNLongUpdCombine _ -> true | _ -> false) then markCombineEdge eid'
-						else relevantEdge eid' )
 				) nsrc ()
 			| NNTuple [("idx",VInteger);("data",_)] ->
 				DG.nodefoldedges (fun ((_,eid'),_,prt) () ->
@@ -2064,11 +3030,101 @@ let findDataEdges dg =
 				) nsrc ()
 			| NNITE _ ->
 				DG.nodefoldedges (fun ((_,eid'),_,prt) () ->
-					if prt <> PortSingleB then relevantEdge eid'
+					if prt <> PortSingleB true then relevantEdge eid'
 				) nsrc ()
 			| _ -> DG.nodefoldedges (fun ((_,eid'),_,_) () -> if IdtSet.mem eid !res then relevantEdge eid') nsrc ()
 	done;
 	IdtSet.union !res !combineedges
+;;
+
+let moveOneNotNodeUp dg oldeid =
+	try
+	let ((IxM cc, _), ntgt, prt) = DG.findedge oldeid dg
+	in
+	if ntgt.nkind.nodeintlbl <> NNNot then None else
+	let Some (nid,_,tgtbackmap) = cc.(0)
+	in
+	let n = DG.findnode nid dg
+	in
+	let (AITT na) = n.inputindextype
+	and (AITT nb) = n.outputindextype
+	and (IxM ncc) = n.ixtypemap
+	and (AITT ntgta) = ntgt.inputindextype
+	in
+	let Some ((),_,nfwdmap) = ncc.(0)
+	in
+	if (match n.nkind.nodeintlbl with NNAnd true | NNOr true -> true | _ -> false) then
+	begin
+		let origIsAnd = (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false)
+		in
+		let ntgtnew = {ntgt with nkind = if origIsAnd then nkOr else nkAnd; inputs = PortMap.empty}
+		in
+		let dg0 = DG.changenode ntgtnew dg
+		in
+		let (dg1, newedgeids) = DG.nodefoldedges (fun ((IxM scc, seid), _, _) (dgcurr, curredgeids) ->
+			let Some (srcid, _, srcbackmap) = scc.(0)
+			in
+			let newnotnode = {ntgt with id = NewName.get (); inputs = PortMap.empty}
+			in
+			let dgn1 = DG.addnode newnotnode dgcurr
+			in
+			let dgn2 = DG.addedge ((identityIndexMap newnotnode.id ntgtnew.inputindextype, NewName.get ()), ntgtnew.id, if origIsAnd then PortUnstrB true else PortStrictB true) dgn1
+			in
+			let (_,newbackmap) = edgecomposition srcbackmap na.(0) nfwdmap nb.(0) tgtbackmap ntgta.(0)
+			in
+			let nedgeid = NewName.get ()
+			in
+			let dgn3 = DG.addedge ((IxM [| Some (srcid, 0, newbackmap) |], nedgeid), newnotnode.id, PortUSingleB) dgn2
+			in
+			(dgn3, IdtSet.add nedgeid curredgeids)
+		) n (dg0, IdtSet.empty)
+		in
+		print_endline ("Moved a NOT node over AND/OR. The ID of the old node was " ^ (NewName.to_string ntgt.id)); (*
+		let oc = open_out ("moveNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg1;
+		close_out oc; *)
+		Some (dg1, newedgeids)
+	end
+	else if (match n.nkind.nodeintlbl with NNTrue _ | NNFalse _ | NNOperation (OPBoolConst _) -> true | _ -> false) then
+	begin
+		let ntgtnew = {ntgt with nkind = if (match n.nkind.nodeintlbl with NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false) then nkFalse else nkTrue; inputs = PortMap.empty}
+		in
+		let dg1 = DG.changenode ntgtnew dg
+		in
+		print_endline ("Merged a NOT node with a constant. The Id of the NOT node was " ^ (NewName.to_string ntgt.id)); (*
+		let oc = open_out ("mergeNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg1;
+		close_out oc; *)
+		Some (dg1, IdtSet.empty)
+	end
+	else if n.nkind.nodeintlbl = NNNot then
+	begin
+		let ntgtnew = {ntgt with nkind = nkId VBoolean; inputs = PortMap.empty}
+		and (posssrcid, posssrcbackmap) = DG.nodefoldedges (fun ((IxM scc, _), _, _) (p1,p2) ->
+			if p1 <> None then (p1,p2) else
+			let Some (srcid,_,srcbackmap) = scc.(0)
+			in
+			(Some srcid, Some srcbackmap)
+		) n (None,None)
+		in
+		let Some srcid = posssrcid
+		and Some srcbackmap = posssrcbackmap
+		in
+		let (_,newbackmap) = edgecomposition srcbackmap na.(0) nfwdmap nb.(0) tgtbackmap ntgta.(0)
+		in
+		let dg1 = DG.addedge ((IxM [| Some (srcid, 0, newbackmap) |], NewName.get ()), ntgt.id, PortSingle VBoolean) (DG.changenode ntgtnew dg)
+		in
+		print_endline ("Joined two NOT-nodes. The Id of the ID-node is " ^ (NewName.to_string ntgt.id)); (*
+		let oc = open_out ("joinNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg1;
+		close_out oc; *)
+		Some (dg1, IdtSet.empty)
+	end
+	else None
+	with Not_found -> None
 ;;
 
 let moveOneLongMergeNode dg oldeid =
@@ -2080,7 +3136,36 @@ let moveOneLongMergeNode dg oldeid =
 	in
 	print_string ("Calling moveMerge for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
 	if (match n.nkind.nodeintlbl with NNLongMerge _ -> false | _ -> true) then Right false else
-	if (match ntgt.nkind.nodeintlbl with NNLongMerge _ -> true | _ -> false) then Right true else 
+	if (match ntgt.nkind.nodeintlbl with NNLongMerge _ -> true | NNLongOr true -> true | _ -> false) then
+	begin
+			(* Right true *)
+		print_string "It is an edge joining two merge (or merge and longor) nodes\n";
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		and (IxM ncc) = n.ixtypemap
+		and (AITT ntgta) = ntgt.inputindextype
+		and (posssrcid, posssrcbackmap) = DG.nodefoldedges (fun ((IxM scc,_),_,_) (f1,f2) ->
+			if f1 <> None then (f1,f2) else
+			let Some (srcid,_,backmap) = scc.(0)
+			in
+			(Some srcid, Some backmap)
+		) n (None, None)
+		in
+		let Some srcid = posssrcid
+		and Some srcbackmap = posssrcbackmap
+		and Some ((), _, fwdmap) = ncc.(0)
+		in
+		let (ntgtaNew, srcbackmapNew) = edgecomposition srcbackmap na.(0) fwdmap nb.(0) tgtbackmap ntgta.(0)
+		in
+		let ntgtNew = {ntgt with inputs = PortMap.empty; inputindextype = AITT [| ntgtaNew |] }
+		in
+		let dg1 = DG.changenode ntgtNew dg
+		in
+		let dg2 = DG.addedge ((IxM [| Some (srcid, 0, srcbackmapNew) |], oldeid), ntgt.id, prt) dg1
+		in
+		Left (dg2, IdtSet.empty, oldeid)
+	end
+	else 
 	begin
 	print_string "It is a suitable edge\n";
 	let (AITT na) = n.inputindextype
@@ -2149,8 +3234,10 @@ let moveOneLongMergeNode dg oldeid =
 		ixtypemap = IxM [| Some ((),0,xtgtccomp) |];
 	}
 	in
+	let makeLongOr = (xtgt.nkind.outputtype = VBoolean)
+	in
 	let newmerge = {
-		nkind = nkLongMerge (xtgt.nkind.outputtype);
+		nkind = if makeLongOr then nkLongOr else nkLongMerge (xtgt.nkind.outputtype);
 		id = ntgt.id;
 		inputs = PortMap.empty;
 		inputindextype = AITT [| xtgtbcomp |];
@@ -2179,7 +3266,7 @@ let moveOneLongMergeNode dg oldeid =
 	in
 	let newedgeid = NewName.get ()
 	in
-	let dg1 = DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid),newmerge.id, PortSingle xtgt.nkind.outputtype) (DG.changenode newmerge (DG.addnode xtgt dg))
+	let dg1 = DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid),newmerge.id, if makeLongOr then PortSingleB true else PortSingle xtgt.nkind.outputtype) (DG.changenode newmerge (DG.addnode xtgt dg))
 	in
 	let dg2 = DG.nodefoldedges (fun ((IxM icc,ieid), _, iprt) dgx ->
 		if ieid = oldeid then
@@ -2192,13 +3279,120 @@ let moveOneLongMergeNode dg oldeid =
 		IdtSet.add oeid currdataedges
 	) newmerge IdtSet.empty
 	in
-	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
+	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n"); (*
 	let oc = open_out ("addLMerge_" ^ (NewName.to_string xtgt.id) ^ ".dot")
 	in
 	GrbPrint.printgraph oc dg2;
-	close_out oc;
+	close_out oc; *)
 	Left (dg2, newdataedges, newedgeid)
 	end
+;;
+
+let moveOneLongorNode dg oldeid =
+	try
+	let ((IxM cc,_), ntgt, prt) = DG.findedge oldeid dg
+	in
+	let Some (nid,_,tgtbackmap) = cc.(0)
+	in
+	let n = DG.findnode nid dg
+	in
+	print_string ("Calling moveLongOr for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
+	if (match n.nkind.nodeintlbl with NNLongOr _ -> false | _ -> true) then None else
+	if (match ntgt.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> true | _ -> false) then None else
+	if (match ntgt.nkind.nodeintlbl with NNLongOr true -> true | _ -> false) then
+	begin
+		print_string "It is an edge joining two longor nodes\n";
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		and (IxM ncc) = n.ixtypemap
+		and (AITT ntgta) = ntgt.inputindextype
+		and (posssrcid, posssrcbackmap) = DG.nodefoldedges (fun ((IxM scc,_),_,_) (f1,f2) ->
+			if f1 <> None then (f1,f2) else
+			let Some (srcid,_,backmap) = scc.(0)
+			in
+			(Some srcid, Some backmap)
+		) n (None, None)
+		in
+		let Some srcid = posssrcid
+		and Some srcbackmap = posssrcbackmap
+		and Some ((), _, fwdmap) = ncc.(0)
+		in
+		let (ntgtaNew, srcbackmapNew) = edgecomposition srcbackmap na.(0) fwdmap nb.(0) tgtbackmap ntgta.(0)
+		in
+		let ntgtNew = {ntgt with inputs = PortMap.empty; inputindextype = AITT [| ntgtaNew |] }
+		in
+		let dg1 = DG.changenode ntgtNew dg
+		in
+		let dg2 = DG.addedge ((IxM [| Some (srcid, 0, srcbackmapNew) |], oldeid), ntgt.id, prt) dg1
+		in
+		print_endline ("Joined two LongOr-nodes. The Id of the remaining node is " ^ (NewName.to_string ntgt.id)); (*
+		let oc = open_out ("joinLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg2;
+		close_out oc; *)
+		Some (dg2, IdtSet.singleton oldeid)
+	end
+	else if (match ntgt.nkind.nodeintlbl with NNAnd true | NNOr true | NNOperation OPAnd | NNOperation OPOr -> true | _ -> false) then
+	begin
+		print_string "It is a suitable edge\n";
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		and (IxM ncc) = n.ixtypemap
+		and (AITT ntgta) = ntgt.inputindextype
+		and Some (srcid, _, srcbackmap) = DG.nodefoldedges (fun ((IxM cc,_),_,_) _ ->
+			let Some (srcid, useThisEdgeIdLater ,backmap) = cc.(0)
+			in
+			Some (srcid,useThisEdgeIdLater, backmap)
+		) n None
+		in
+		let Some ((),_,nfwdmap) = ncc.(0)
+		in
+		let (newntgta, oldeid_newbackmap) = edgecomposition srcbackmap na.(0) nfwdmap nb.(0) tgtbackmap ntgta.(0)
+		in
+		let newntgt = {ntgt with nkind = nkLongOr; inputindextype = AITT [| newntgta |]; inputs = PortMap.empty}
+		and newindextype = AITT [| newntgta |]
+		in
+		let newopnode = {
+			nkind = ntgt.nkind;
+			id = NewName.get ();
+			inputindextype = newindextype;
+			outputindextype = newindextype;
+			ixtypemap = identityIndexMap () newindextype;
+			inputs = PortMap.empty
+		}
+		in
+		let dg0 = DG.addedge ((identityIndexMap newopnode.id newindextype, NewName.get ()), ntgt.id, PortSingleB true) (DG.addnode newopnode (DG.changenode newntgt dg))
+		in
+		let (dg1, initedges) = DG.nodefoldedges (fun ((IxM scc, seid), _, sprt) (dgcurr, eset) ->
+			let Some (nsrcid, _, nsrcbackmap) = scc.(0)
+			and neweid = NewName.get ()
+			in
+			let dgnext = if seid = oldeid then
+			begin
+				DG.addedge ((IxM [| Some (srcid, 0, oldeid_newbackmap) |], neweid), newopnode.id, sprt) dgcurr
+			end
+			else
+			begin
+				DG.addedge ((IxM scc, neweid), newopnode.id, sprt) dgcurr
+			end
+			in
+			(dgnext, IdtSet.add neweid eset)
+		) ntgt (dg0, IdtSet.empty)
+		in
+		let consideredgeids = DG.nodefoldoutedges dg1 (fun ((_, eid),_,_) s ->
+			IdtSet.add eid s
+		) newntgt initedges
+		in
+		print_endline ("Moved a LongOr-node. The Id of the created operation node is " ^ (NewName.to_string ntgt.id)); (*
+		let oc = open_out ("moveLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg1;
+		close_out oc; *)
+		Some (dg1, consideredgeids)
+	end
+	else
+		None
+	with Not_found -> None
 ;;
 
 let moveMergeDown dg =
@@ -2281,6 +3475,137 @@ let moveMergeDown dg =
 	!currdg
 ;;
 
+let moveOneJustMergeNode dg oldeid =
+	try
+	let ((IxM cc,_), ntgt, prt) = DG.findedge oldeid dg
+	in
+	let Some (nid,_,tgtbackmap) = cc.(0)
+	in
+	let n = DG.findnode nid dg
+	in
+	print_endline ("Calling moveOneJustMergeNode for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id));
+	if (match n.nkind.nodeintlbl with NNMerge _ -> false | _ -> true) then None else
+	if ntgt.nkind.contracts then None else
+	let (AITT na) = n.inputindextype
+	and (AITT nb) = n.outputindextype
+	and (IxM ncc) = n.ixtypemap
+	and (AITT ntgta) = ntgt.inputindextype
+	in
+	let Some ((),_,nFwdMap) = ncc.(0)
+	in
+	if (match ntgt.nkind.nodeintlbl with NNMerge _ -> true | _ -> false) then 
+	begin
+		print_endline "Joining two Merge-s";
+		let (dg1, newedgeids) = DG.nodefoldedges (fun ((IxM scc, seid), _, _) (dgcurr, curredgeids) ->
+			let Some (nsrcid, _, srcbackmap) = scc.(0)
+			in
+			let (_, compbackmap) = edgecomposition srcbackmap na.(0) nFwdMap nb.(0) tgtbackmap ntgta.(0)
+			and neid = NewName.get ()
+			in
+			((DG.addedge ((IxM [| Some (nsrcid, 0, compbackmap) |], neid), ntgt.id, prt) dgcurr), (IdtSet.add neid curredgeids))
+		) n (dg, IdtSet.empty)
+		in
+		let dg2 = DG.remedge oldeid dg1
+		in
+		let newedgeids' = IdtSet.filter (fun neid -> try ignore (DG.findedge neid dg2); true with Not_found -> false) newedgeids
+		in
+		print_endline ("Joined the Merge nodes over the edge with id " ^ (NewName.to_string oldeid)); (*
+		let oc = open_out ("joinSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dg2;
+		close_out oc; *)
+		Some (dg2, newedgeids')
+	end
+	else
+	begin
+		print_endline "It is a suitable edge";
+		let becomesOr = (ntgt.nkind.outputtype = VBoolean)
+		in
+		let ntgtnew = {ntgt with nkind = if becomesOr then nkOr else nkMerge ntgt.nkind.outputtype; inputs = PortMap.empty}
+		in
+		let dg0 = DG.changenode ntgtnew dg
+		in
+		let dgn = DG.nodefoldedges (fun ((IxM scc, seid), _, _) dg1 ->
+			let newop = {ntgt with id = NewName.get (); inputs = PortMap.empty}
+			and Some (nsrcid, _, srcbackmap) = scc.(0)
+			in
+			let dg2 = DG.addnode newop dg1
+			in
+			let dg3 = DG.nodefoldedges (fun ((IxM tcc, teid), _, tprt) dgcurr ->
+				if teid = oldeid then
+				begin
+					let (_, compbackmap) = edgecomposition srcbackmap na.(0) nFwdMap nb.(0) tgtbackmap ntgta.(0)
+					in
+					DG.addedge ((IxM [| Some (nsrcid, 0, compbackmap) |], NewName.get ()), newop.id, tprt) dgcurr
+				end
+				else
+				begin
+					DG.addedge ((IxM tcc, NewName.get ()), newop.id, tprt) dgcurr
+				end
+			) ntgt dg2
+			in
+			DG.addedge ((identityIndexMap newop.id newop.inputindextype, NewName.get ()), ntgtnew.id, if becomesOr then PortUnstrB true else PortMulti ntgt.nkind.outputtype) dg3
+		) n dg0
+		in
+		let considerEdges = if becomesOr then IdtSet.empty else DG.nodefoldoutedges dgn (fun ((_,eid),_,_) s -> IdtSet.add eid s) (DG.findnode ntgtnew.id dgn) IdtSet.empty
+		in
+		print_endline ("Moved the Merge over the node with id " ^ (NewName.to_string ntgtnew.id) ^ " entering with edge " ^ (NewName.to_string oldeid)); (*
+		let oc = open_out ("moveSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
+		in
+		GrbPrint.printgraph oc dgn;
+		close_out oc; *)
+		Some (dgn, considerEdges)
+	end
+	with Not_found -> None
+;;
+
+let moveNodesUpOrDown singleMoveFun dg =
+	let currdg = ref dg
+	in
+	let edgeQ = Queue.create ()
+	and elemsInQ = ref IdtSet.empty
+	in
+	let putInQueue eid = if IdtSet.mem eid !elemsInQ then () else
+		begin
+			Queue.add eid edgeQ;
+			elemsInQ := IdtSet.add eid !elemsInQ;
+			print_endline ("Added edgeId no. " ^ (NewName.to_string eid) ^ " to the queue")
+		end
+	and takeFromQueue () =
+		let eid = Queue.take edgeQ
+		in
+		elemsInQ := IdtSet.remove eid !elemsInQ;
+		eid
+	in
+	DG.foldedges (fun ((IxM cc, eid),_,_) () ->
+		let Some (srcid,_,_) = cc.(0)
+		in
+		let srcn = DG.findnode srcid dg
+		in
+		putInQueue eid
+	(*	(if (match srcn.nkind.nodeintlbl with NNMerge _ -> true | _ -> false) then putInQueue eid) *)
+	) dg ();
+	while (not (Queue.is_empty edgeQ)) do
+		let eid = takeFromQueue ()
+		in
+		print_string ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue\n");
+		match singleMoveFun !currdg eid with
+		| None -> ()
+		| Some (dgn, newedges) ->
+		begin
+			currdg := dgn;
+			IdtSet.iter (fun eid -> putInQueue eid) newedges
+		end
+	done;
+	!currdg
+;;
+
+let moveJustMergeDown = moveNodesUpOrDown moveOneJustMergeNode;;
+
+let moveLongorsDown = moveNodesUpOrDown moveOneLongorNode;;
+
+let moveNotsUp = moveNodesUpOrDown moveOneNotNodeUp;;
+
 let moveOneFilterNode dg oldeid =
 	let ((IxM cc,_), ntgt, prt) = DG.findedge oldeid dg
 	in
@@ -2288,25 +3613,24 @@ let moveOneFilterNode dg oldeid =
 	in
 	let n = DG.findnode nid dg
 	in
-	print_string ("Calling moveFilter for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id) ^ "\n");
+	print_endline ("Calling moveFilter for edge " ^ (NewName.to_string oldeid) ^ ", going from " ^ (NewName.to_string n.id) ^ " to " ^ (NewName.to_string ntgt.id));
 	if (match n.nkind.nodeintlbl with NNFilter _ -> false | _ -> true) then None else
-	if (match ntgt.nkind.nodeintlbl with NNLongUpdCombine _ | NNUpdCombine _ -> true | _ -> false) then None else
 	if ntgt.nkind.contracts then None else
 	if (match ntgt.nkind.nodeintlbl with NNFilter _ | NNOutput _ -> true | _ -> false) then 
 	begin
-		print_string "Joining two filters\n";
+		print_endline "Joining two filters";
 		let (AITT na) = n.inputindextype
 		and (AITT nb) = n.outputindextype
 		and (IxM ncc) = n.ixtypemap
 		and (Some (srcid, backmap), Some (fltsrcid, fltbackmap)) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) (foundsrc, foundflt) ->
 			let Some (srcid, _, backmap) = cc.(0)
 			in
-			if prt = PortSingleB then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
+			if prt = PortSingleB true then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
 		) n (None, None)
 		and Some (flt2srcid, flt2eid, flt2backmap) = DG.nodefoldedges (fun ((IxM cc, flt2eid), _, prt) foundflt ->
 			let Some (srcid, _, backmap) = cc.(0)
 			in
-			if prt = PortSingleB then Some (srcid, flt2eid, backmap) else foundflt
+			if prt = PortSingleB true then Some (srcid, flt2eid, backmap) else foundflt
 		) ntgt None
 		and vtype =
 			match ntgt.nkind.nodeintlbl with
@@ -2344,25 +3668,25 @@ let moveOneFilterNode dg oldeid =
 		and src2tgtmap = Array.init (Array.length backmap) (fun x -> tgtbackmap.(revfwdmap.(backmap.(x))))
 		in
 		let dg1 =
-			DG.addedge ((IxM [| Some (flt2srcid, 0, flt2backmap) |], NewName.get ()), combNode.id, PortStrictB)
-			(DG.addedge ((IxM [| Some (fltsrcid, 0, flt2tgtmap) |], NewName.get ()), combNode.id, PortStrictB)
-			(DG.addedge ((identityIndexMap combNode.id ntgt.inputindextype, flt2eid), ntgt.id, PortSingleB)
+			DG.addedge ((IxM [| Some (flt2srcid, 0, flt2backmap) |], NewName.get ()), combNode.id, PortStrictB true)
+			(DG.addedge ((IxM [| Some (fltsrcid, 0, flt2tgtmap) |], NewName.get ()), combNode.id, PortStrictB true)
+			(DG.addedge ((identityIndexMap combNode.id ntgt.inputindextype, flt2eid), ntgt.id, PortSingleB true)
 			(DG.addedge ((IxM [| Some (srcid, 0, src2tgtmap) |], oldeid), ntgt.id, PortSingle vtype)
 			(DG.addnode combNode dg))))
 		in
 		let srcn = DG.findnode srcid dg1
 		in
 		let putEidBack = match srcn.nkind.nodeintlbl with NNFilter _ -> true | _ -> false
-		in
+		in (*
 		let oc = open_out ("joinFilter_" ^ (NewName.to_string combNode.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
-		close_out oc;
+		close_out oc; *)
 		Some (Right (dg1, putEidBack))
 	end
 	else 
 	begin
-	print_string "It is a suitable edge\n";
+	print_endline "It is a suitable edge";
 	let (AITT na) = n.inputindextype
 	and (AITT nb) = n.outputindextype
 	and (IxM ncc) = n.ixtypemap
@@ -2370,7 +3694,7 @@ let moveOneFilterNode dg oldeid =
 	and (Some (srcid, backmap), Some (fltsrcid, fltbackmap)) = DG.nodefoldedges (fun ((IxM cc,_),_,prt) (foundsrc, foundflt) ->
 		let Some (srcid, _, backmap) = cc.(0)
 		in
-		if prt = PortSingleB then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
+		if prt = PortSingleB true then (foundsrc, Some (srcid, backmap)) else (Some (srcid, backmap), foundflt)
 	) n (None, None)
 	in
 	let Some ((),_,nfwdmap) = ncc.(0)
@@ -2426,7 +3750,7 @@ let moveOneFilterNode dg oldeid =
 	let newedgeid = NewName.get ()
 	and filteringbackmap = Array.init (Array.length fltbackmap) (fun x -> tgtbackmap.(revfwdmap.(fltbackmap.(x))))
 	in
-	let dg1 = DG.addedge ((IxM [| Some (fltsrcid, 0, filteringbackmap) |], NewName.get ()), newfilter.id, if filterBecomesAnd then PortStrictB else PortSingleB) (DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid), newfilter.id, if filterBecomesAnd then PortStrictB else PortSingle xtgt.nkind.outputtype) (DG.changenode newfilter (DG.addnode xtgt dg)))
+	let dg1 = DG.addedge ((IxM [| Some (fltsrcid, 0, filteringbackmap) |], NewName.get ()), newfilter.id, if filterBecomesAnd then PortStrictB true else PortSingleB true) (DG.addedge ((identityIndexMap xtgt.id (AITT [| xtgtbcomp |]), newedgeid), newfilter.id, if filterBecomesAnd then PortStrictB true else PortSingle xtgt.nkind.outputtype) (DG.changenode newfilter (DG.addnode xtgt dg)))
 	in
 	let dg2 = DG.nodefoldedges (fun ((IxM icc,ieid), _, iprt) dgx ->
 		if ieid = oldeid then
@@ -2439,11 +3763,11 @@ let moveOneFilterNode dg oldeid =
 		IdtSet.add oeid currdataedges
 	) newfilter IdtSet.empty
 	in
-	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n");
+	print_endline ("The new node has id " ^ (NewName.to_string xtgt.id)); (*
 	let oc = open_out ("addFilter_" ^ (NewName.to_string xtgt.id) ^ ".dot")
 	in
 	GrbPrint.printgraph oc dg2;
-	close_out oc;
+	close_out oc; *)
 	Some (Left (dg2, newdataedges, newedgeid))
 	end
 ;;
@@ -2488,25 +3812,25 @@ let moveFilterDown dg =
 			in
 			let Some (srcid,_,_) = cc.(0)
 			in
-			print_string ("The edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string srcid) ^ " to " ^ (NewName.to_string ntgt.id) ^ " is missing from the queue!\n")
+			print_endline ("The edge no. " ^ (NewName.to_string eid) ^ " from " ^ (NewName.to_string srcid) ^ " to " ^ (NewName.to_string ntgt.id) ^ " is missing from the queue!")
 		) badEdges
 	in
 	while (not (Queue.is_empty edgeQ)) do
 		(* checkLoopInvariant (); *)
 		let eid = takeFromQueue ()
 		in
-		print_string ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue\n");
+		print_endline ("Take edge no. " ^ (NewName.to_string eid) ^ " from queue");
 		match moveOneFilterNode !currdg eid with
 		| None -> ()
 		| Some (Right (dgnew, putEidBack)) ->
 		begin
 			currdg := dgnew;
-			(if putEidBack then (putInQueue eid; print_string ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue\n")))
+			(if putEidBack then (putInQueue eid; print_endline ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue")))
 		end
 		| Some (Left (newdg, edgesForQ, newdataedge)) ->
 		begin
 			IdtSet.iter (fun neid ->
-				if IdtSet.mem neid !dataedges then (putInQueue neid; print_string ("Add edge no. " ^ (NewName.to_string neid) ^ " to queue\n"))
+				if IdtSet.mem neid !dataedges then (putInQueue neid; print_endline ("Add edge no. " ^ (NewName.to_string neid) ^ " to queue"))
 			) edgesForQ;
 			dataedges := IdtSet.add newdataedge !dataedges;
 			currdg := newdg;
@@ -2517,180 +3841,1130 @@ let moveFilterDown dg =
 			let srcn = DG.findnode srcid newdg
 			in
 			if (match srcn.nkind.nodeintlbl with NNFilter _ -> true | _ -> false) then
-				(putInQueue eid; print_string ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue\n"))
+				(putInQueue eid; print_endline ("Adding edge no. " ^ (NewName.to_string eid) ^ " back to the queue"))
 		end
 	done;
 	!currdg
 ;;
 
-(*
-let moveFiltersAndLongsDown dg =
-	let workq = Queue.create ()
+let proposeMultiplicity dg nid =
+	let n = DG.findnode nid dg
 	in
-	DG.foldnodes (fun n () ->
-		match n.nkind.nodeintlbl with
-			| NNLongOr
-			| NNLongMerge _
-			| NNFilter _ -> (DG.nodefoldoutedges (fun ((_,eid),_,_) () -> Queue.add eid workq) dg n ())
-			| _ -> ()
-	) dg ();
-	let currdg = ref dg
-	and lastTimeSkipped = ref None
-	in
-	while (not (Queue.is_empty workq)) do
-		let eid = Queue.take workq
+	match n.nkind.nodeintlbl with
+		| NNOutput _ -> 1
+		| _ ->  3 (* 5 *) (* 10 *)
+;;
+
+let unrollCycles dg multiplicity =
+	let backedges =
+		let extUppers = ref IdtMap.empty
 		in
-		try
-			let ((IxM cc, _), ntgt, prt) = DG.findedge eid !currdg
-			in
-			let Some (nid, _, backmap) = cc.(0)
-			in
-			let n = DG.findnode nid !currdg
-			in
-			(if n.nodeintlbl.outputtype = VBoolean then
+		let rec findUppers nid nUppers =
+			if IdtMap.mem nid !extUppers then ()
+			else
 			begin
-				match ntgt.nkind.nodeintlbl, prt with
-					| NNFilter _, PortSingle _ ->
-						let replntgt = {
-							nkind = nkAnd;
-							id = ntgt.id;
-							inputindextype = ntgt.inputindextype;
-							outputindextype = ntgt.outputindextype;
-							ixtypemap = ntgt.ixtypemap;
-							inputs = PortMap.empty;
-						}
-						in
-						let dgnew = DG.changenode replntgt !currdg
-						in
-						let dgnew2 = DG.nodefoldedges (fun ((IxM cc, eeid), _, prt) accdg ->
-							DG.addedge ((IxM cc, eeid), ntgt.id, PortStrictB) accdg
-						) ntgt !currdg
-						in
-						currdg := dgnew2
-					| NNLongMerge _, PortSingle _ ->
-						let replntgt = {
-							nkind = nkLongOr;
-							id = ntgt.id;
-							inputindextype = ntgt.inputindextype;
-							outputindextype = ntgt.outputindextype;
-							ixtypemap = ntgt.ixtypemap;
-							inputs = PortMap.empty;
-						}
-						in
-						let dgnew = DG.changenode replntgt !currdg
-						in
-						let dgnew2 = DG.nodefoldedges (fun ((IxM cc, eeid), _, prt) accdg ->
-							DG.addedge ((IxM cc, eeid), ntgt.id, PortSingleB) accdg
-						) ntgt !currdg
-						in
-						currdg := dgnew2
-					| _,_ -> ()
-			end);
-			let ntgt = DG.findedge ntgt.id !currdg
+				extUppers := IdtMap.add nid nUppers !extUppers;
+				let ndownUppers = IdtSet.add nid nUppers
+				in
+				DG.nodefoldoutedges dg (fun ((cc, eid), nnext, prt) () ->
+					findUppers nnext.id ndownUppers
+				) (DG.findnode nid dg) ()
+			end
+		in
+		DG.foldnodes (fun n () ->
+			findUppers n.id IdtSet.empty
+		) dg ();
+		DG.foldedges (fun ((IxM cc,eid),ntgt,_) foundBEdges ->
+			let Some (srcid, _,_) = cc.(0)
 			in
-			match n.nkind.nodeintlbl with
-				| NNLongOr -> begin
-					match ntgt.nkind.nodeintlbl with
-						| NNAnd
-						| NNOr ->
-							let (AITT nna) = n.inputindextype
-							and (AITT nnb) = n.outputindextype
-							and (IxM nnc) = n.ixtypemap
-							and (AITT nta) = ntgt.inputindextype
-							and (AITT ntb) = ntgt.outputindextype
-							and (IxM ntc) = ntgt.ixtypemap
+			let srcUps = IdtMap.find srcid !extUppers
+			in
+			if IdtSet.mem ntgt.id srcUps then IdtSet.add eid foundBEdges else foundBEdges
+		) dg IdtSet.empty
+	in
+	let (_,sccomps) = SCCFinder.scc dg
+	in
+	let (noEdgesRes, ids) = DG.foldnodes (fun n (ndgcurr,nids) ->
+		let seqns = intfromto 0 ((multiplicity n.id) - 1)
+		in
+		let nodeids = List.map (fun _ -> NewName.get ()) seqns
+		in
+		((List.fold_right (fun newnodeid ndgnext ->
+			let nn = {n with id = newnodeid; inputs = PortMap.empty}
+			in
+			DG.addnode nn ndgnext
+			) nodeids ndgcurr), (IdtMap.add n.id (Array.of_list nodeids) nids))
+	) dg (DG.empty, IdtMap.empty)
+	in
+	DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
+		let seqns = intfromto 0 ((multiplicity ntgt.id) - 1)
+		and Some (srcid,_,backmap) = cc.(0)
+		in
+		let srccopies = multiplicity srcid
+		and isBackedge = IdtSet.mem eid backedges
+		and tgtids = IdtMap.find ntgt.id ids
+		and srcids = IdtMap.find srcid ids
+		in
+		List.fold_right (fun idx dgnext ->
+			let srcidx = if (sccomps srcid) = (sccomps ntgt.id) then (if isBackedge then idx + 1 else idx) else 0
+			in
+			if srcidx < srccopies then
+				DG.addedge ((IxM [| Some (srcids.(srcidx), 0, backmap) |], NewName.get ()), tgtids.(idx), prt) dgnext
+			else
+			begin
+				let srcnode = DG.findnode srcid dg
+				in
+				let errnode = {srcnode with
+					nkind = if (portdesc prt).inputkind = VBoolean then nkFalse else if (portdesc prt).inputkind = VNaeloob then nkTrueDT else nkError;
+					inputs = PortMap.empty;
+					id = NewName.get ();
+					inputindextype = srcnode.outputindextype;
+					ixtypemap = identityIndexMap () srcnode.outputindextype;
+				}
+				in
+				DG.addedge ((IxM [| Some (errnode.id, 0, backmap) |], NewName.get ()), tgtids.(idx), prt) (DG.addnode errnode dgnext)
+			end
+		) seqns dgcurr
+	) dg noEdgesRes
+;;
+
+let getRidOfNaeloobs dg =
+	let n2bTbl = Hashtbl.create 10
+	and b2nTbl = Hashtbl.create 10
+	in
+	let dg1 = DG.foldnodes (fun n dgcurr ->
+		if n.nkind.outputtype <> VNaeloob then dgcurr else
+		let getKind = function
+			| NNAnd false -> nkOr
+			| NNOr false -> nkAnd
+			| NNLongOr false -> nkLongAnd
+			| NNLongAnd false -> nkLongOr
+			| NNTrue false -> nkFalse
+			| NNFalse false -> nkTrue
+		in
+		match n.nkind.nodeintlbl with
+			| NNAnd false
+			| NNOr false
+			| NNLongOr false
+			| NNTrue false
+			| NNFalse false
+			| NNLongAnd false ->
+			begin
+				let ndual = {n with nkind = getKind n.nkind.nodeintlbl; inputs = PortMap.empty; id = NewName.get ()}
+				in
+				Hashtbl.add n2bTbl n.id ndual.id;
+				Hashtbl.add b2nTbl ndual.id n.id;
+				DG.addnode ndual dgcurr
+			end
+			| NNNotFlip false ->
+			begin
+				let ndual = {
+					n with
+					nkind = nkId VBoolean;
+					id = NewName.get ();
+					inputs = PortMap.empty	
+				}
+				in
+				Hashtbl.add n2bTbl n.id ndual.id;
+				let ((IxM cc, _), _, _) = DG.findedge (IdtSet.choose (DG.edges_to_port dgcurr n.id (PortSingleB true))) dgcurr
+				in
+				let Some (srcid, _, backmap) = cc.(0)
+				in
+				DG.addedge ((IxM [| Some (srcid, 0, backmap) |], NewName.get ()), ndual.id, PortSingle VBoolean) (DG.addnode ndual dgcurr)
+			end
+	) dg dg
+	in
+	let dualport = function
+		| PortStrictB b -> PortStrictB (not b)
+		| PortUnstrB b -> PortUnstrB (not b)
+		| PortSingleB b -> PortSingleB (not b)
+	in
+	let dg2 = Hashtbl.fold (fun blnid nlbid dgcurr ->
+		let nlb = DG.findnode nlbid dgcurr
+		in
+		DG.nodefoldedges (fun ((IxM cc, eid), _, prt) dgnext ->
+			let Some (nlbsrcid, _, backmap) = cc.(0)
+			in
+			DG.addedge ((IxM [| Some (Hashtbl.find n2bTbl nlbsrcid, 0, backmap) |], NewName.get ()), blnid, dualport prt) dgnext
+		) nlb dgcurr
+	) b2nTbl dg1
+	in
+	let dg3 = DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
+		let Some (srcid, _, backmap) = cc.(0)
+		in
+		let nsrc = DG.findnode srcid dgcurr
+		in
+		if nsrc.nkind.nodeintlbl <> NNNotFlip true then dgcurr else
+		let ((IxM cc', _), _, _) = DG.findedge (IdtSet.choose (DG.edges_to_port dgcurr srcid (PortSingleB false))) dgcurr
+		and IxM ncc = nsrc.ixtypemap
+		in
+		let Some ((), _, fwdmap) = ncc.(0)
+		in
+		let invfwdmap =
+			let res = Array.make (Array.length fwdmap) (-1)
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				res.(fwdmap.(i)) <- i
+			done;
+			res
+		in
+		let Some (srcid', _, backmap') = cc'.(0)
+		in
+		let resbackmap = Array.init (Array.length backmap') (fun i -> backmap.(invfwdmap.(backmap'.(i))))
+		in
+		DG.addedge ((IxM [| Some (Hashtbl.find n2bTbl srcid', 0, resbackmap) |], eid), ntgt.id, prt) dgcurr
+	) dg2 dg2
+	in
+	dg3
+;;
+
+let noIntermediateNOTs dg =
+	let n2bTbl = Hashtbl.create 10
+	and b2nTbl = Hashtbl.create 10
+	in
+	let isBoolOper n = (* (match n.nkind.nodeintlbl with
+		| NNAnd true
+		| NNOr true
+		| NNLongOr true
+		| NNLongAnd true
+		| NNTrue true
+		| NNId
+		| NNNot
+		| NNFalse true -> true
+		| _ -> false) && *) (n.nkind.outputtype = VBoolean)
+	in
+	let dg1 = DG.foldnodes (fun n dgcurr ->
+		if not (isBoolOper n) then dgcurr else
+		let getKind = function
+			| NNAnd true -> nkOr
+			| NNOr true -> nkAnd
+			| NNLongOr true -> nkLongAnd
+			| NNLongAnd true -> nkLongOr
+			| NNTrue true -> nkFalse
+			| NNFalse true -> nkTrue
+			| NNId -> nkId VBoolean
+		in
+		match n.nkind.nodeintlbl with
+			| NNAnd true
+			| NNOr true
+			| NNLongOr true
+			| NNTrue true
+			| NNFalse true
+			| NNId
+			| NNLongAnd true ->
+			begin
+				let ndual = {n with nkind = getKind n.nkind.nodeintlbl; inputs = PortMap.empty; id = NewName.get ()}
+				in
+				Hashtbl.add n2bTbl n.id ndual.id;
+				Hashtbl.add b2nTbl ndual.id n.id;
+				DG.addnode ndual dgcurr
+			end
+			| NNNot ->
+			begin
+				let ndual = {
+					n with
+					nkind = nkId VBoolean;
+					id = NewName.get ();
+					inputs = PortMap.empty	
+				}
+				in
+				Hashtbl.add n2bTbl n.id ndual.id;
+				let ((IxM cc, _), _, _) = DG.findedge (IdtSet.choose (DG.edges_to_port dgcurr n.id PortUSingleB)) dgcurr
+				in
+				let Some (srcid, _, backmap) = cc.(0)
+				in
+				DG.addedge ((IxM [| Some (srcid, 0, backmap) |], NewName.get ()), ndual.id, PortSingle VBoolean) (DG.addnode ndual dgcurr)
+			end
+			| _ ->
+			begin
+				let ndual = {
+					n with
+					nkind = nkNot;
+					id = NewName.get ();
+					inputs = PortMap.empty;
+					inputindextype = n.outputindextype;
+					ixtypemap = identityIndexMap () n.outputindextype
+				}
+				in
+				Hashtbl.add n2bTbl n.id ndual.id;
+				DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get()), ndual.id, PortUSingleB) (DG.addnode ndual dgcurr)
+			end
+	) dg dg
+	in
+	let dualport = function
+		| PortStrictB b -> PortUnstrB b
+		| PortUnstrB b -> PortStrictB b
+		| PortSingleB b -> PortSingleB b
+	in
+	let dg2 = Hashtbl.fold (fun blnid nlbid dgcurr ->
+		let nlb = DG.findnode nlbid dgcurr
+		in
+		DG.nodefoldedges (fun ((IxM cc, eid), _, prt) dgnext ->
+			let Some (nlbsrcid, _, backmap) = cc.(0)
+			in
+			print_endline ("noIntermediateNOTs: adding neg.edge for edge no. " ^ (NewName.to_string eid) ^ ", going from node no. " ^ (NewName.to_string nlbsrcid) ^ " to port " ^ (string_of_portname prt) ^ " of node no. " ^ (NewName.to_string nlbid) );
+			DG.addedge ((IxM [| Some (Hashtbl.find n2bTbl nlbsrcid, 0, backmap) |], NewName.get ()), blnid, dualport prt) dgnext
+		) nlb dgcurr
+	) b2nTbl dg1
+	in
+	let dg3 = DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
+		let Some (srcid, _, backmap) = cc.(0)
+		in
+		let nsrc = DG.findnode srcid dgcurr
+		in
+		if nsrc.nkind.nodeintlbl <> NNNot then dgcurr else
+		let ((IxM cc', _), _, _) = DG.findedge (IdtSet.choose (DG.edges_to_port dgcurr srcid PortUSingleB)) dgcurr
+		and IxM ncc = nsrc.ixtypemap
+		in
+		let Some ((), _, fwdmap) = ncc.(0)
+		in
+		let invfwdmap =
+			let res = Array.make (Array.length fwdmap) (-1)
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				res.(fwdmap.(i)) <- i
+			done;
+			res
+		in
+		let Some (srcid', _, backmap') = cc'.(0)
+		in
+		let resbackmap = Array.init (Array.length backmap') (fun i -> backmap.(invfwdmap.(backmap'.(i))))
+		in
+		DG.addedge ((IxM [| Some (Hashtbl.find n2bTbl srcid', 0, resbackmap) |], eid), ntgt.id, prt) dgcurr
+	) dg2 dg2
+	in
+	dg3
+;;
+
+module IntPairOrdered =
+struct
+	type t = int * int
+	let compare = Pervasives.compare
+end;;
+
+module IntPairSet = MySet(IntPairOrdered);;
+
+module IntPairSetMap = MyMap(IntPairSet);;
+
+(*
+module IntDblArrayOrdered =
+struct
+	type t = (int * int) array
+	let compare a b =
+		let al = Array.length a
+		and bl = Array.length b
+		in
+		if al < bl then (-1) else
+		if al > bl then 1 else
+		let res = ref None
+		in
+		for i = 0 to (al - 1) do
+			match !res with
+				| Some _ -> ()
+				| None -> (let (a1,a2) = al.(i) and (b1,b2) = bl.(i) in if (a1 < b1) || ((a1 = b1) && (a2 < b2)) then res := Some false else if (a1 = b1) && (a2 = b2) then () else res := Some true)
+		done;
+		match !res with
+			| Some false -> (-1)
+			| Some true -> 1
+			| None -> 0
+end;;
+
+module IntDblArrayMap = MyMap(IntDblArrayOrdered);;
+*)
+
+let simplifyMergeSources dg =
+	let currdg = ref dg
+	in
+	let arrayToIPS a = IntPairSet.of_list (Array.to_list (Array.mapi (fun idx x ->  (idx,x) (* (x,idx) *)  ) a))
+	and ipsToIntMap s = IntPairSet.fold (fun (x,y) m -> IntMap.add x y m) s IntMap.empty
+	and ipsToIntMapRev s = IntPairSet.fold (fun (y,x) m -> IntMap.add x y m) s IntMap.empty
+	in
+	let addDimsWithEquals (AITT dataixt) jointdims (AITT mergeixt) =
+		let missingInMerge = IntPairSet.fold (fun (x,y) s -> IntSet.add y s) jointdims IntSet.empty
+		in
+		let upperhalf =
+			let res = Array.make ((Array.length mergeixt.(0)) - (IntSet.cardinal missingInMerge)) (NoValue, None)
+			in
+			let cixt = ref 0
+			in
+			for i = 0 to (Array.length mergeixt.(0)) - 1 do
+				if (IntSet.mem i missingInMerge) then () else
+				begin
+					res.(!cixt) <- mergeixt.(0).(i);
+					incr cixt
+				end
+			done;
+			res
+		in
+		AITT [| Array.append dataixt.(0) upperhalf |]
+	in
+	let ixmapFromData (AITT dataixt) jointdims (AITT mergeixt) = IxM [| Some ((),0, Array.init (Array.length dataixt.(0)) (fun i -> i)) |]
+	in
+	let ixmapFromMerge (AITT dataixt) jointdims (AITT mergeixt) =
+		let res = Array.make (Array.length mergeixt.(0)) (-1)
+		and cixt = ref (Array.length dataixt.(0))
+		and jdmap = ipsToIntMapRev jointdims
+		in
+		for i = 0 to (Array.length mergeixt.(0)) - 1 do
+			let mapinto = try
+				IntMap.find i jdmap
+			with Not_found ->
+			begin
+				let x = !cixt
+				in
+				incr cixt;
+				x
+			end
+			in
+			res.(i) <- mapinto
+		done;
+		IxM [| Some ((), 0, res) |]
+	in
+	let jointdimsOverBackmap (AITT dataixt) oldjointdims (AITT oldmergeixt) (AITT newmergeixt) backmap fwdmap = 
+		let invfwdmap =
+			let res = ref IntMap.empty
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				res := IntMap.add fwdmap.(i) i !res
+			done;
+			!res
+		in
+		IntPairSet.fold (fun (dx,dy) ips ->
+			let ddy = backmap.(dy)
+			in
+			try
+				IntPairSet.add (dx, IntMap.find ddy invfwdmap) ips
+			with Not_found -> ips
+
+(*			let ddx = backmap.(dx)
+			in
+			try
+				IntPairSet.add (IntMap.find ddx invfwdmap, dy) ips
+			with Not_found -> ips
+*)
+		) oldjointdims IntPairSet.empty
+	in
+	let ixmapOverBackmap (AITT dataixt) oldjointdims (AITT oldmergeixt) (AITT newmergeixt) backmap fwdmap =
+		let res = Array.make ((Array.length dataixt.(0)) + (Array.length oldmergeixt.(0)) - (IntPairSet.cardinal oldjointdims)) (-1)
+		in
+		let invfwdmap =
+			let res = ref IntMap.empty
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				res := IntMap.add fwdmap.(i) i !res
+			done;
+			!res
+		and invMergeIxmap =
+			let IxM [| Some (_,_,toinv) |] = ixmapFromMerge (AITT dataixt) oldjointdims (AITT oldmergeixt)
+			and res = ref IntMap.empty
+			in
+			for i = 0 to (Array.length toinv) - 1 do
+				res := IntMap.add toinv.(i) i !res
+			done;
+			!res
+		and newjointdims = jointdimsOverBackmap (AITT dataixt) oldjointdims (AITT oldmergeixt) (AITT newmergeixt) backmap fwdmap
+		in
+		let IxM [| Some (_,_,newMergeIxmap) |] = ixmapFromMerge (AITT dataixt) newjointdims (AITT newmergeixt)
+		in
+		let maxAtNMIxmap = Array.fold_right max newMergeIxmap (Array.length dataixt.(0))
+		in
+		for i = 0 to (Array.length res) - 1 do
+			if i < Array.length dataixt.(0) then
+				res.(i) <- i
+			else
+			begin
+				let j = backmap.(IntMap.find i invMergeIxmap)
+				in
+				if IntMap.mem j invfwdmap then
+					res.(i) <- newMergeIxmap.(IntMap.find j invfwdmap)
+				else
+					()
+			end
+		done;
+		let c = ref (maxAtNMIxmap + 1)
+		in
+		for i = 0 to (Array.length res) - 1 do
+			if res.(i) = (-1) then
+			begin
+				res.(i) <- !c;
+				incr c
+			end else ()
+		done;
+		IxM [| Some ((), 0, res) |]
+	in
+	let applDimChange changefun origmap = IntPairSetMap.fold (fun ips v mm ->
+		IntPairSetMap.add (changefun ips) v mm
+	) origmap IntPairSetMap.empty
+	in
+	(* In the end, we take the data node, put its dimensions down and the output dimensions of the filter/merge node (except for the joint dimensions) on top of it. The guard node must have all these dimensions in the same order *)
+	let (compinstrs : NewName.idtype IntPairSetMap.t IdtMap.t IdtMap.t) = TopolSorter.fold (fun nid currinps ->
+		let n = DG.findnode nid !currdg
+		in
+		match n.nkind.nodeintlbl with
+			| NNFilter vt
+			| NNLongMerge vt
+			| NNMerge vt ->
+				let v = DG.nodefoldedges (fun ((IxM cc, eid), _, prt) cinps ->
+					if (match prt with PortSingleB true -> true | _ -> false) then cinps else
+					let Some (srcid,_,backmap) = cc.(0)
+					in
+					let srcn = DG.findnode srcid !currdg
+					in
+(*					let srcinps = try IdtMap.mapi (fun datanid ipsm -> let datan = DG.findnode datanid !currdg in applDimChange (fun jds -> jointdimsOverBackmap datan.outputindextype jds srcn.outputindextype n.inputindextype backmap n.ixtypemap) ipsm) (IdtMap.find srcid currinps) *)
+					let srcinps = try IdtMap.find srcid currinps
+					with Not_found -> begin
+						let newtrue = {
+							nkind = nkTrue;
+							id = NewName.get ();
+							inputs = PortMap.empty;
+							inputindextype = srcn.outputindextype;
+							outputindextype = srcn.outputindextype;
+							ixtypemap = identityIndexMap () srcn.outputindextype
+						}
+						in
+						currdg := DG.addnode newtrue !currdg;
+						IdtMap.singleton srcid (IntPairSetMap.singleton (arrayToIPS backmap) newtrue.id)
+					end
+					in
+					let srcinps' = IdtMap.mapi (fun dnid ipsm ->
+						let dn = DG.findnode dnid !currdg
+						in
+						IntPairSetMap.fold (fun ips bnid nipsm ->
+							let IxM [| Some (_,_,nixtypemap0) |] = n.ixtypemap
 							in
-							let Some ((),_,nfwdmap) = nnc.(0)
-							and Some ((),_,tfwdmap) = ntc.(0)
+							let newjointdims = jointdimsOverBackmap dn.outputindextype ips srcn.outputindextype n.outputindextype backmap nixtypemap0
 							in
-							let ncontracted =
-								let res = Array.make (Array.length nna.(0)) true
+							let ixmapForComingId = ixmapOverBackmap dn.outputindextype ips srcn.outputindextype n.outputindextype backmap nixtypemap0
+							in
+							let IxM [| Some ((),_,ixmapForComingIdContent) |] = ixmapForComingId
+							in
+							let newoutputindextype = addDimsWithEquals dn.outputindextype newjointdims n.outputindextype
+							and oldoutputindextype = addDimsWithEquals dn.outputindextype ips srcn.outputindextype
+							in
+							let AITT [| newoutputindextypeContent |] = newoutputindextype
+							and AITT [| oldoutputindextypeContent |] = oldoutputindextype
+							in
+							let maxJointDim = (Array.fold_right max ixmapForComingIdContent ((Array.length newoutputindextypeContent) -1)) + 1
+							in
+							let revixmapForComingIdContent =
+								let res = Array.make maxJointDim (-1)
 								in
-								Array.iteri (fun _ i -> res.(i) <- false) nfwdmap;
-								res
-							and numContracted = (Array.length nna.(0)) - (Array.length nnb.(0))
-							in
-							let ncontractedPtr =
-								let res = Array.make numContracted 0
-								and ptr = ref 0
-								in
-								for i = 0 to ((Array.length nna.(0)) - 1) do
-									if ncontracted.(i) then
-									begin
-										res.(!ptr) <- i;
-										ptr := !ptr + 1
-									end else ()
+								for i = 0 to (Array.length ixmapForComingIdContent) - 1 do
+									res.(ixmapForComingIdContent.(i)) <- i
 								done;
 								res
 							in
-							let nwa0 =
-								let res = Array.make ((Array.length nta.(0)) + numContracted) (NoValue, None)
-								in
-								for i = 0 to ((Array.length res) - 1) do
-									if i < Array.length nta.(0) then
-										res.(i) <- nta.(0).(i)
-									else
-										res.(i) <- nna.(0).(ncontractedPtr.(i - (Array.length nta.(0))))
-								done;
-								res
+							let newinputindextypeContent = Array.init maxJointDim (fun i ->
+								if i < Array.length newoutputindextypeContent then newoutputindextypeContent.(i)
+								else
+									oldoutputindextypeContent.(revixmapForComingIdContent.(i))
+							)
 							in
-							let nwb0 =
-								let res = Array.make ((Array.length ntb.(0)) + numContracted) (NoValue, None)
-								in
-								for i = 0 to ((Array.length res) - 1) do
-									if i < Array.length ntb.(0) then
-										res.(i) <- ntb.(0).(i)
-									else
-										res.(i) <- nna.(0).(ncontractedPtr.(i - (Array.length ntb.(0))))
-								done;
-								res
-							in
-							let wfwdmap =
-								let res = Array.make ((Array.length tfwdmap) + numContracted) (-1)
-								in
-								for i = 0 to ((Array.length res) - 1) do
-									if i < Array.length tfwdmap then
-										res.(i) <- tfwdmap.(i)
-									else
-										res.(i) <- i - ((Array.length nta.(0)) - (Array.length ntb.(0)))
-								done;
-								res
-							in
-							let newAndNode = {
-								nkind = ntgt.nkind;
+							let newbn = {
+								nkind = nkLongOr;
 								id = NewName.get ();
-								inputindextype = AITT [| nwa0 |];
-								outputindextype = AITT [| nwb0 |];
-								ixtypemap = IxM [| Some ((), 0, wfwdmap) |];
 								inputs = PortMap.empty;
+								inputindextype = AITT [| newinputindextypeContent |];
+								outputindextype = newoutputindextype;
+								ixtypemap = identityIndexMap () newoutputindextype
 							}
 							in
-							let dg1 = DG.addnode newAndNode !currdg
-							in
-							let dg2 = DG.nodefoldedges (fun ((IxM dd, eeid), no, nprt) dgnow ->
-								if eeid = eid then
+							currdg := DG.addedge ((mapindexmap (fun _ -> bnid) ixmapForComingId, NewName.get ()), newbn.id, PortSingleB true) (DG.addnode newbn !currdg);
+							try
+								let existbnid = IntPairSetMap.find newjointdims nipsm
+								in
+								let neworn = {
+									nkind = nkOr;
+									id = NewName.get ();
+									inputs = PortMap.empty;
+									inputindextype = newoutputindextype;
+									outputindextype = newoutputindextype;
+									ixtypemap = identityIndexMap () newoutputindextype
+								}
+								in
+								currdg := DG.addedge ((identityIndexMap existbnid newoutputindextype, NewName.get ()), neworn.id, PortUnstrB true) (DG.addedge ((identityIndexMap newbn.id newoutputindextype, NewName.get ()), neworn.id, PortUnstrB true) (DG.addnode neworn !currdg));
+								IntPairSetMap.add newjointdims neworn.id nipsm
+							with Not_found -> IntPairSetMap.add newjointdims newbn.id nipsm
+					) ipsm IntPairSetMap.empty) srcinps
+					in
+					IdtMap.merge (fun dnid posscipsm posssipsm -> match posscipsm, posssipsm with
+						| None, None -> None
+						| Some x, None -> Some x
+						| None, Some y -> Some y
+						| Some cipsm, Some sipsm ->
+						begin
+							Some (IntPairSetMap.merge (fun ips posscnid possbnid -> match posscnid, possbnid with
+								| None, None -> None
+								| Some cnid, None -> None
+								| None, Some bnid -> None
+								| Some cnid, Some bnid ->
 								begin
-								
+									let cn = DG.findnode cnid !currdg
+									in
+									let neworn = {
+										nkind = nkOr;
+										id = NewName.get ();
+										inputs = PortMap.empty;
+										inputindextype = cn.outputindextype;
+										outputindextype = cn.outputindextype;
+										ixtypemap = identityIndexMap () cn.outputindextype
+									}
+									in
+									currdg := DG.addedge ((identityIndexMap cnid cn.outputindextype, NewName.get ()), neworn.id, PortUnstrB true) (DG.addedge ((identityIndexMap bnid cn.outputindextype, NewName.get ()), neworn.id, PortUnstrB true) (DG.addnode neworn !currdg));
+									Some neworn.id
 								end
-								else
-								begin
-								
-								end
-							) ntgt dg1
+							) cipsm sipsm)
+						end
+					) cinps srcinps'
+				) n IdtMap.empty
+				in
+				(match n.nkind.nodeintlbl with
+					| NNFilter _ ->
+					begin
+						let ((IxM [| Some (beid,_,bcc)|], _), _, _) = DG.findedge (IdtSet.choose (DG.edges_to_port !currdg n.id (PortSingleB true))) !currdg
+						and (AITT na) = n.inputindextype
+						and (AITT nb) = n.outputindextype
+						and (IxM [| Some (_,_,ncc) |]) = n.ixtypemap
+						in
+						let revncc =
+							let res = Array.make (Array.length na.(0)) (-1)
 							in
-							
-						| NNFilter _ ->
-						| NNOutput rls ->
-				end
-				| NNLongMerge vtype -> begin
-					
-				end
-				| NNFilter vtype -> begin
-					
-				end
-		with Not_found -> ()
-	done;
+							for i = 0 to (Array.length ncc) - 1 do
+								res.(ncc.(i)) <- i
+							done;
+							res
+						in
+						let v' = IdtMap.mapi (fun srcid ipsm ->
+							let srcn = DG.findnode srcid !currdg
+							in
+							IntPairSetMap.mapi (fun ips cntrid ->
+								let cntrn = DG.findnode cntrid !currdg
+								in
+								let newcntrn = {
+									nkind = nkAnd;
+									id = NewName.get ();
+									inputs = PortMap.empty;
+									inputindextype = cntrn.outputindextype;
+									outputindextype = cntrn.outputindextype;
+									ixtypemap = identityIndexMap () cntrn.outputindextype
+								}
+								in
+								currdg := DG.addedge ((identityIndexMap cntrn.id cntrn.outputindextype, NewName.get ()), newcntrn.id, PortStrictB true) (DG.addnode newcntrn !currdg);
+								let IxM [| Some (_,_,dcc) |] = ixmapFromMerge srcn.outputindextype ips n.outputindextype
+								in
+								let acc = Array.map (fun atNa -> dcc.(revncc.(atNa))) bcc
+								in
+								currdg := DG.addedge ((IxM [| Some (beid, 0, acc) |], NewName.get ()), newcntrn.id, PortStrictB true) !currdg;
+								newcntrn.id
+							) ipsm
+						) v
+						in
+						IdtMap.add nid v' currinps
+					end
+					| _ -> IdtMap.add nid v currinps
+				)
+			| _ -> currinps
+	) dg IdtMap.empty
+	in
+	let replaceFMInCurrdg oldid =
+		if not (IdtMap.mem oldid compinstrs) then None else
+		let oldn = DG.findnode oldid !currdg
+		in
+		let oldsrcs = IdtMap.find oldid compinstrs
+		in
+		let longmergeids = IdtMap.fold (fun srcid ipsm lmids ->
+			let srcn = DG.findnode srcid !currdg
+			in
+			IntPairSetMap.fold (fun ips cntrid llmids ->
+				let bothixtype = addDimsWithEquals srcn.outputindextype ips oldn.outputindextype
+				and ixm_data = ixmapFromData srcn.outputindextype ips oldn.outputindextype
+				and ixm_merge = ixmapFromMerge srcn.outputindextype ips oldn.outputindextype
+				in
+				let newfilternode = {
+					nkind = nkFilter (oldn.nkind.outputtype);
+					id = NewName.get ();
+					inputs = PortMap.empty;
+					inputindextype = bothixtype;
+					outputindextype = bothixtype;
+					ixtypemap = identityIndexMap () bothixtype
+				}
+				and newlmnode = {
+					nkind = nkLongMerge (oldn.nkind.outputtype);
+					id = NewName.get ();
+					inputs = PortMap.empty;
+					inputindextype = bothixtype;
+					outputindextype = oldn.outputindextype;
+					ixtypemap = ixm_merge
+				}
+				in
+				currdg := DG.addedge ((identityIndexMap cntrid bothixtype, NewName.get ()), newfilternode.id, PortSingleB true) (DG.addedge ((mapindexmap (fun _ -> srcid) ixm_data, NewName.get ()), newfilternode.id, PortSingle oldn.nkind.outputtype) (DG.addedge ((identityIndexMap newfilternode.id bothixtype, NewName.get ()), newlmnode.id, PortSingle oldn.nkind.outputtype) (DG.addnode newfilternode (DG.addnode newlmnode !currdg))));
+				newlmnode.id :: llmids
+			) ipsm lmids
+		) oldsrcs []
+		in
+		let newmerge = {
+			nkind = nkMerge (oldn.nkind.outputtype);
+			id = NewName.get ();
+			inputs = PortMap.empty;
+			inputindextype = oldn.outputindextype;
+			outputindextype = oldn.outputindextype;
+			ixtypemap = identityIndexMap () oldn.outputindextype
+		}
+		in
+		currdg := DG.addnode newmerge !currdg;
+		List.iter (fun lmid ->
+			currdg := DG.addedge ((identityIndexMap lmid oldn.outputindextype, NewName.get ()), newmerge.id, PortMulti oldn.nkind.outputtype) !currdg
+		) longmergeids;
+		Some newmerge.id
+	in
+	TopolSorter.fold (fun nid () ->
+		match (replaceFMInCurrdg nid) with
+			| None -> ()
+			| Some newid ->
+				DG.nodefoldoutedges !currdg ( fun ((IxM cc, eid), tgtn, prt) () ->
+					currdg := DG.addedge ((IxM (Array.map (function Some (_, _, backmap) -> Some (newid, 0, backmap)) cc), eid), tgtn.id, prt) !currdg
+				) (DG.findnode nid !currdg) ()
+	) dg ();
 	!currdg
 ;;
-*)
+
+
+let dimFunDepsToDimEqs_old dg =
+	let maxAllowedLen = 5
+	in
+	let maxAddrGenLevel = DG.foldnodes (fun n mm ->
+		match n.nkind.nodeintlbl with
+		| NNAddrGen (genid, gendim, _) ->
+			let foundMax = try IdtMap.find genid mm with Not_found -> (-1)
+			in
+			if gendim > foundMax then IdtMap.add genid gendim mm else mm
+		| _ -> mm
+	) dg IdtMap.empty
+	in
+	let foundDeps = Hashtbl.create 10
+	and workQ = Queue.create ()
+	and processedItems = Hashtbl.create 10
+	in
+	DG.foldnodes (fun n () ->
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		in
+		let isize = Array.length na.(0)
+		and osize = Array.length nb.(0)
+		in
+		let iArr = Array.init isize (fun _ -> Array.init isize (fun _ -> Hashtbl.create 10))
+		and oArr = Array.init osize (fun _ -> Array.init osize (fun _ -> Hashtbl.create 10))
+		in
+		Hashtbl.add foundDeps n.id (iArr,oArr)
+	) dg ();
+	(* initialize deps *)
+	DG.foldnodes (fun n () ->
+		if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then () else
+		let possTakeDimDim = ref None
+		and possAddrFunDimAndName = ref None
+		in
+		DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
+			let Some (srcid,_,backmap) = cc.(0)
+			in
+			let srcn = DG.findnode srcid dg
+			in
+			match srcn.nkind.nodeintlbl with
+			| NNTakeDim _ ->
+				let (AITT srcnb) = srcn.outputindextype
+				in
+				if (Array.length srcnb.(0)) = 1 then possTakeDimDim := Some backmap.(0) else ()
+			| NNAddrGen (genid, gendim, _) ->
+				if ((Array.length backmap) = 1) && (gendim = IdtMap.find genid maxAddrGenLevel) then possAddrFunDimAndName := Some (backmap.(0), genid, gendim) else ()
+			| _ -> ()
+		) n ();
+		if (match !possTakeDimDim, !possAddrFunDimAndName with | None,_ | _,None -> true | _,_ -> false) then () else
+		let Some takeDimDim = !possTakeDimDim
+		and Some (addrFunDim, addrFunId, addrFunLevel) = !possAddrFunDimAndName
+		in
+		let (inpEqs, _) = Hashtbl.find foundDeps n.id
+		in
+		Hashtbl.add inpEqs.(takeDimDim).(addrFunDim) [Left (addrFunId, addrFunLevel)] ();
+		Hashtbl.add inpEqs.(addrFunDim).(takeDimDim) [Right (addrFunId, addrFunLevel)] ();
+		Queue.add (n.id, true, takeDimDim, addrFunDim, [Left (addrFunId, addrFunLevel)]) workQ;
+		Queue.add (n.id, true, addrFunDim, takeDimDim, [Right (addrFunId, addrFunLevel)]) workQ (* "true" indicates addition to inpEqs *)
+	) dg ();
+	let simplifyMapping ll =
+		let rec simplifyAcc toLeft toRight = match toLeft, toRight with
+			| xs, [] -> List.rev xs
+			| [], (x::xs) -> simplifyAcc [x] xs
+			| (x::xs), (y::ys) -> ( match x,y with
+				| Left z1, Right z2
+				| Right z2, Left z1 when z1 = z2 -> simplifyAcc xs ys
+				| _,_ -> simplifyAcc (y::x::xs) ys
+			)
+		in
+		simplifyAcc [] ll
+	in
+	let handleElem (nid, isInp, leftDim, rightDim, v) =
+		let n = DG.findnode nid dg
+		in
+		let (inpEqs, outpEqs) = Hashtbl.find foundDeps nid
+		in
+		let combEqs = if isInp then inpEqs else outpEqs
+		in
+		let combSize = Array.length combEqs
+		in
+		for sideDim = 0 to combSize - 1 do
+			let addedVsL = Hashtbl.fold (fun lv () currll ->
+				let nv = simplifyMapping (lv @ v)
+				in
+				if (List.length nv) > maxAllowedLen then currll else nv :: currll
+			) combEqs.(sideDim).(leftDim) []
+			and addedVsR = Hashtbl.fold (fun rv () currll ->
+				let nv = simplifyMapping (v @ rv)
+				in
+				if (List.length nv) > maxAllowedLen then currll else nv :: currll
+			) combEqs.(rightDim).(sideDim) []
+			in
+			List.iter (fun nv ->
+				if Hashtbl.mem combEqs.(sideDim).(rightDim) nv then () else
+				(Hashtbl.add combEqs.(sideDim).(rightDim) nv ();
+				Queue.add (nid, isInp, sideDim, rightDim, nv) workQ)
+			) addedVsL;
+			List.iter (fun nv ->
+				if Hashtbl.mem combEqs.(leftDim).(sideDim) nv then () else
+				(Hashtbl.add combEqs.(leftDim).(sideDim) nv ();
+				Queue.add (nid, isInp, leftDim, sideDim, nv) workQ)
+			) addedVsR
+		done;
+		if isInp then
+		begin
+			let (IxM nc) = n.ixtypemap
+			in
+			let Some ((),_,fwdmap) = nc.(0)
+			in
+			let possTgtLeftDim = ref None
+			and possTgtRightDim = ref None
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				(if fwdmap.(i) = leftDim then possTgtLeftDim := Some i);
+				(if fwdmap.(i) = rightDim then possTgtRightDim := Some i)
+			done;
+			if (match !possTgtLeftDim, !possTgtRightDim with None,_ | _,None -> true | _ -> false) then () else
+			let Some tgtLeftDim = !possTgtLeftDim
+			and Some tgtRightDim = !possTgtRightDim
+			in
+			if Hashtbl.mem outpEqs.(tgtLeftDim).(tgtRightDim) v then () else
+			(Hashtbl.add outpEqs.(tgtLeftDim).(tgtRightDim) v ();
+			Queue.add (nid, false, tgtLeftDim, tgtRightDim, v) workQ)
+		end
+		else
+		begin
+			DG.nodefoldoutedges dg (fun ((IxM cc, _), ntgt, _) () ->
+				let Some (_,_,backmap) = cc.(0)
+				and (tinpEqs,_) = Hashtbl.find foundDeps ntgt.id
+				in
+				let tgtLeftDim = backmap.(leftDim)
+				and tgtRightDim = backmap.(rightDim)
+				in
+				if Hashtbl.mem tinpEqs.(tgtLeftDim).(tgtRightDim) v then () else
+				(Hashtbl.add tinpEqs.(tgtLeftDim).(tgtRightDim) v ();
+				Queue.add (ntgt.id, true, tgtLeftDim, tgtRightDim, v) workQ)
+			) n ()
+		end
+	in
+	while not (Queue.is_empty workQ) do
+		let vv = Queue.take workQ
+		in
+		if Hashtbl.mem processedItems vv then () else
+		(Hashtbl.add processedItems vv ();
+		handleElem vv)
+	done;
+	DG.foldnodes (fun n currdg ->
+		if (match n.nkind.nodeintlbl with | NNOutput _ -> false | NNAnd _ -> true | _ -> true) then currdg else
+		let (dgref, newCtrlNode) = if (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then ((ref dg), n) else
+		begin
+			let possCtrlSrcId = ref None
+			and possCtrlMap = ref None
+			and possCtrlEdgeId = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
+				match prt with
+					| PortSingleB _ -> begin
+						let Some (srcid,_,backmap) = cc.(0)
+						in
+						possCtrlSrcId := Some srcid;
+						possCtrlMap := Some backmap;
+						possCtrlEdgeId := Some eid
+					end
+					| _ -> ()
+			) n ();
+			let Some ctrlSrcId = !possCtrlSrcId
+			and Some ctrlMap = !possCtrlMap
+			and Some ctrlEdgeId = !possCtrlEdgeId
+			in
+			let (AITT na) = n.inputindextype
+			in
+			let newCtrlNode = {
+				nkind = nkAnd;
+				id = NewName.get ();
+				inputindextype = n.inputindextype;
+				outputindextype = n.outputindextype;
+				ixtypemap = identityIndexMap () n.inputindextype;
+				inputs = PortMap.empty;
+			}
+			in
+			let dgref = ref (DG.addedge ((IxM [| Some (ctrlSrcId ,0, ctrlMap) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addedge ((identityIndexMap newCtrlNode.id n.inputindextype, ctrlEdgeId), n.id, PortSingleB true) (DG.addnode newCtrlNode currdg)))
+			in
+			(dgref, newCtrlNode)
+		end
+		in
+		let (inpEqs, _) = Hashtbl.find foundDeps n.id
+		and (AITT na) = n.inputindextype
+		in
+		let size = Array.length inpEqs
+		in
+		for i = 0 to (size - 2) do
+			for j = (i+1) to (size - 1) do
+				if Hashtbl.mem inpEqs.(i).(j) [] then
+				begin
+					let dimeqindextype = AITT [| [|na.(0).(i); na.(0).(j) |] |]
+					in
+					let dimEqNode = {
+						nkind = nkDimEq;
+						id = NewName.get ();
+						inputindextype = dimeqindextype;
+						outputindextype = dimeqindextype;
+						ixtypemap = identityIndexMap () dimeqindextype;
+						inputs = PortMap.empty;
+					}
+					in
+					dgref := DG.addedge ((IxM [| Some (dimEqNode.id, 0, [|i;j|]) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addnode dimEqNode !dgref)
+				end else ()
+			done
+		done;
+		!dgref
+	) dg dg
+;;
+
+let dimFunDepsToDimEqs dg =
+	let maxAllowedLen = 5
+	in
+	let maxAddrGenLevel = DG.foldnodes (fun n mm ->
+		match n.nkind.nodeintlbl with
+		| NNAddrGen (genid, gendim, _) ->
+			let foundMax = try IdtMap.find genid mm with Not_found -> (-1)
+			in
+			if gendim > foundMax then IdtMap.add genid gendim mm else mm
+		| _ -> mm
+	) dg IdtMap.empty
+	in
+	let foundDeps = Hashtbl.create 10
+	and workQ = Queue.create ()
+	and processedItems = Hashtbl.create 10
+	in
+	DG.foldnodes (fun n () ->
+		let (AITT na) = n.inputindextype
+		and (AITT nb) = n.outputindextype
+		in
+		let isize = Array.length na.(0)
+		and osize = Array.length nb.(0)
+		in
+		let iArr = Array.init isize (fun _ -> Array.init isize (fun _ -> Hashtbl.create 10))
+		and oArr = Array.init osize (fun _ -> Array.init osize (fun _ -> Hashtbl.create 10))
+		in
+		Hashtbl.add foundDeps n.id (iArr,oArr)
+	) dg ();
+	(* initialize deps *)
+	DG.foldnodes (fun n () ->
+		if (match n.nkind.nodeintlbl with NNIsEq | NNOperation OPIsEq -> false | _ -> true) then () else
+		let possTakeDimDim = ref None
+		and possAddrFunDimAndName = ref None
+		in
+		DG.nodefoldedges (fun ((IxM cc,_), _, _) () ->
+			let Some (srcid,_,backmap) = cc.(0)
+			in
+			let srcn = DG.findnode srcid dg
+			in
+			match srcn.nkind.nodeintlbl with
+			| NNTakeDim _ ->
+				let (AITT srcnb) = srcn.outputindextype
+				in
+				if (Array.length srcnb.(0)) = 1 then possTakeDimDim := Some backmap.(0) else ()
+			| NNAddrGen (genid, gendim, _) ->
+				if ((Array.length backmap) = 1) && (gendim = IdtMap.find genid maxAddrGenLevel) then possAddrFunDimAndName := Some (backmap.(0), genid, gendim) else ()
+			| _ -> ()
+		) n ();
+		if (match !possTakeDimDim, !possAddrFunDimAndName with | None,_ | _,None -> true | _,_ -> false) then () else
+		let Some takeDimDim = !possTakeDimDim
+		and Some (addrFunDim, addrFunId, addrFunLevel) = !possAddrFunDimAndName
+		in
+		let (inpEqs, _) = Hashtbl.find foundDeps n.id
+		in
+		Hashtbl.add inpEqs.(takeDimDim).(addrFunDim) ([Left (addrFunId, addrFunLevel)], true) (); (* "true" indicates that the non-bottom value implies the equality between dimensions *)
+		Hashtbl.add inpEqs.(addrFunDim).(takeDimDim) ([Right (addrFunId, addrFunLevel)], true) ();
+		Queue.add (n.id, true, takeDimDim, addrFunDim, ([Left (addrFunId, addrFunLevel)], true)) workQ;
+		Queue.add (n.id, true, addrFunDim, takeDimDim, ([Right (addrFunId, addrFunLevel)], true)) workQ (* "true" as 2nd argument indicates addition to inpEqs *)
+	) dg ();
+	let simplifyMapping ll =
+		let rec simplifyAcc toLeft toRight = match toLeft, toRight with
+			| xs, [] -> List.rev xs
+			| [], (x::xs) -> simplifyAcc [x] xs
+			| (x::xs), (y::ys) -> ( match x,y with
+				| Left z1, Right z2
+				| Right z2, Left z1 when z1 = z2 -> simplifyAcc xs ys
+				| _,_ -> simplifyAcc (y::x::xs) ys
+			)
+		in
+		simplifyAcc [] ll
+	in
+	let handleElem (nid, isInp, leftDim, rightDim, (v, isNonBot)) =
+		let n = DG.findnode nid dg
+		in
+		let (inpEqs, outpEqs) = Hashtbl.find foundDeps nid
+		in
+		let combEqs = if isInp then inpEqs else outpEqs
+		in
+		let combSize = Array.length combEqs
+		in
+		for sideDim = 0 to combSize - 1 do
+			let addedVsL = Hashtbl.fold (fun (lv, lvinb) () currll ->
+				if isNonBot = lvinb then
+					let nv = simplifyMapping (lv @ v)
+					in
+					if (List.length nv) > maxAllowedLen then currll else nv :: currll
+				else currll
+			) combEqs.(sideDim).(leftDim) []
+			and addedVsR = Hashtbl.fold (fun (rv, rvinb) () currll ->
+				if isNonBot = rvinb then
+					let nv = simplifyMapping (v @ rv)
+					in
+					if (List.length nv) > maxAllowedLen then currll else nv :: currll
+				else currll
+			) combEqs.(rightDim).(sideDim) []
+			in
+			List.iter (fun nv ->
+				if Hashtbl.mem combEqs.(sideDim).(rightDim) (nv, isNonBot) then () else
+				(Hashtbl.add combEqs.(sideDim).(rightDim) (nv, isNonBot) ();
+				Queue.add (nid, isInp, sideDim, rightDim, (nv, isNonBot)) workQ)
+			) addedVsL;
+			List.iter (fun nv ->
+				if Hashtbl.mem combEqs.(leftDim).(sideDim) (nv, isNonBot) then () else
+				(Hashtbl.add combEqs.(leftDim).(sideDim) (nv, isNonBot) ();
+				Queue.add (nid, isInp, leftDim, sideDim, (nv, isNonBot)) workQ)
+			) addedVsR
+		done;
+		if isInp then
+		begin
+			let (IxM nc) = n.ixtypemap
+			in
+			let Some ((),_,fwdmap) = nc.(0)
+			in
+			let possTgtLeftDim = ref None
+			and possTgtRightDim = ref None
+			in
+			for i = 0 to (Array.length fwdmap) - 1 do
+				(if fwdmap.(i) = leftDim then possTgtLeftDim := Some i);
+				(if fwdmap.(i) = rightDim then possTgtRightDim := Some i)
+			done;
+			if (match !possTgtLeftDim, !possTgtRightDim with None,_ | _,None -> true | _ -> false) then () else
+			let Some tgtLeftDim = !possTgtLeftDim
+			and Some tgtRightDim = !possTgtRightDim
+			in
+			if Hashtbl.mem outpEqs.(tgtLeftDim).(tgtRightDim) (v, isNonBot) then () else
+			(Hashtbl.add outpEqs.(tgtLeftDim).(tgtRightDim) (v, isNonBot) ();
+			Queue.add (nid, false, tgtLeftDim, tgtRightDim, (v, isNonBot)) workQ)
+		end
+		else
+		begin
+			DG.nodefoldoutedges dg (fun ((IxM cc, _), ntgt, prt) () ->
+				let Some (_,_,backmap) = cc.(0)
+				and (tinpEqs,_) = Hashtbl.find foundDeps ntgt.id
+				in
+				let tgtLeftDim = backmap.(leftDim)
+				and tgtRightDim = backmap.(rightDim)
+				in
+				let (doesPropagate, propBot) =
+					if isNonBot && (PortOptSet.mem POptStrict (portdesc prt).inputopts) then (true, true)
+					else if (not isNonBot) && (match ntgt.nkind.nodeintlbl with NNLongOr _ | NNOr true | NNAnd false | NNLongAnd _ | NNMerge _ -> true | _ -> false) then (true, false)
+					else if ntgt.nkind.nodeintlbl = NNNot then (true, not isNonBot)
+					else (false, false)
+				in
+				if doesPropagate then
+				begin
+					if Hashtbl.mem tinpEqs.(tgtLeftDim).(tgtRightDim) (v, propBot) then () else
+					(Hashtbl.add tinpEqs.(tgtLeftDim).(tgtRightDim) (v, propBot) ();
+					Queue.add (ntgt.id, true, tgtLeftDim, tgtRightDim, (v, propBot)) workQ)
+				end else ()
+			) n ()
+		end
+	in
+	while not (Queue.is_empty workQ) do
+		let vv = Queue.take workQ
+		in
+		if Hashtbl.mem processedItems vv then () else
+		(Hashtbl.add processedItems vv ();
+		handleElem vv)
+	done;
+	((DG.foldnodes (fun n currdg ->
+		if (match n.nkind.nodeintlbl with | NNOutput _ -> false | NNAnd _ -> true | _ -> true) then currdg else
+		let (dgref, newCtrlNode) = if (match n.nkind.nodeintlbl with NNAnd _ -> true | _ -> false) then ((ref dg), n) else
+		begin
+			let possCtrlSrcId = ref None
+			and possCtrlMap = ref None
+			and possCtrlEdgeId = ref None
+			in
+			DG.nodefoldedges (fun ((IxM cc,eid),_,prt) () ->
+				match prt with
+					| PortSingleB _ -> begin
+						let Some (srcid,_,backmap) = cc.(0)
+						in
+						possCtrlSrcId := Some srcid;
+						possCtrlMap := Some backmap;
+						possCtrlEdgeId := Some eid
+					end
+					| _ -> ()
+			) n ();
+			let Some ctrlSrcId = !possCtrlSrcId
+			and Some ctrlMap = !possCtrlMap
+			and Some ctrlEdgeId = !possCtrlEdgeId
+			in
+			let (AITT na) = n.inputindextype
+			in
+			let newCtrlNode = {
+				nkind = nkAnd;
+				id = NewName.get ();
+				inputindextype = n.inputindextype;
+				outputindextype = n.outputindextype;
+				ixtypemap = identityIndexMap () n.inputindextype;
+				inputs = PortMap.empty;
+			}
+			in
+			let dgref = ref (DG.addedge ((IxM [| Some (ctrlSrcId ,0, ctrlMap) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addedge ((identityIndexMap newCtrlNode.id n.inputindextype, ctrlEdgeId), n.id, PortSingleB true) (DG.addnode newCtrlNode currdg)))
+			in
+			(dgref, newCtrlNode)
+		end
+		in
+		let (inpEqs, _) = Hashtbl.find foundDeps n.id
+		and (AITT na) = n.inputindextype
+		in
+		let size = Array.length inpEqs
+		in
+		for i = 0 to (size - 2) do
+			for j = (i+1) to (size - 1) do
+				if Hashtbl.mem inpEqs.(i).(j) ([], true) then
+				begin
+					let dimeqindextype = AITT [| [|na.(0).(i); na.(0).(j) |] |]
+					in
+					let dimEqNode = {
+						nkind = nkDimEq;
+						id = NewName.get ();
+						inputindextype = dimeqindextype;
+						outputindextype = dimeqindextype;
+						ixtypemap = identityIndexMap () dimeqindextype;
+						inputs = PortMap.empty;
+					}
+					in
+					dgref := DG.addedge ((IxM [| Some (dimEqNode.id, 0, [|i;j|]) |], NewName.get ()), newCtrlNode.id, PortStrictB true) (DG.addnode dimEqNode !dgref)
+				end else ()
+			done
+		done;
+		!dgref
+	) dg dg), foundDeps)
+;;
 

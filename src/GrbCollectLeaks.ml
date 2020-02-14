@@ -16,16 +16,18 @@ let rec (oneOfEach : 'a list list -> 'a list list) = function
 let rec describeDependency dg n =
 	match n.nkind.nodeintlbl with
 		| NNTakeDim _
-		| NNTrue
-		| NNFalse
+		| NNTrue _
+		| NNFalse _
 		| NNError -> []
 		| NNInputExists _
-		| NNInput _ -> [n.nkind.nodelabel n.ixtypemap, "always"]
+		| NNInput _ -> [n.nkind.nodelabel, "always"]
 		| NNOperation OPGeoDist
 		| NNOperation OPDiv
 		| NNNot
-		| NNAnd
-		| NNLongOr
+		| NNNotFlip _
+		| NNAnd _
+		| NNLongOr _
+		| NNLongAnd _
 		| NNOperation OPCoalesce
 		| NNTuple _
 		| NNOperation OPPlus ->
@@ -96,7 +98,7 @@ let rec describeDependency dg n =
 				let ninp = DG.findnode srcid dg
 				in
 				match prt with
-					| PortSingleB ->
+					| PortSingleB _ ->
 						controldescPl := describeCondition dg ninp
 					| PortSingle _ ->
 						inputdescPl := Some (describeDependency dg ninp)
@@ -134,7 +136,7 @@ let rec describeDependency dg n =
 				let ninp = DG.findnode srcid dg
 				in
 				match prt with
-					| PortSingleB ->
+					| PortSingleB _ ->
 						controldescPl := Some (describeCondition dg ninp)
 					| PortTrue _ ->
 						truedescPl := Some (describeDependency dg ninp)
@@ -164,7 +166,7 @@ and describeCondition dg n =
 	in
 	match n.nkind.nodeintlbl with
 		| NNDimEq -> ""
-		| NNAnd ->
+		| NNAnd _ ->
 			let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -172,7 +174,7 @@ and describeCondition dg n =
 				in (describeCondition dg ninp) :: ll
 			) n []
 			in "All of the following hold: [" ^ (String.concat ", " inpdescs) ^ "]"
-		| NNOr ->
+		| NNOr _ ->
 			let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -180,7 +182,8 @@ and describeCondition dg n =
 				in (describeCondition dg ninp) :: ll
 			) n []
 			in "At least one of the following holds: [" ^ (String.concat ", " inpdescs) ^ "]"
-		| NNNot ->
+		| NNNot
+		| NNNotFlip _ ->
 				let inpdescs = DG.nodefoldedges (fun ((IxM m,eid),_,prt) ll ->
 				let Some (srcid,_,_) = m.(0)
 				in
@@ -188,12 +191,12 @@ and describeCondition dg n =
 				in (describeCondition dg ninp) :: ll
 			) n []
 			in "The statement \"" ^ (List.hd inpdescs) ^ "\" does not hold"
-		| NNTakeDim _ -> n.nkind.nodelabel n.ixtypemap
-		| NNTrue -> "TRUE"
-		| NNFalse -> "FALSE"
+		| NNTakeDim _ -> n.nkind.nodelabel
+		| NNTrue _ -> "TRUE"
+		| NNFalse _ -> "FALSE"
 		| NNError -> "ERROR"
-		| NNInputExists _ -> n.nkind.nodelabel n.ixtypemap
-		| NNInput _ -> "The value of " ^ (n.nkind.nodelabel n.ixtypemap)
+		| NNInputExists _ -> n.nkind.nodelabel
+		| NNInput _ -> "The value of " ^ (n.nkind.nodelabel)
 		| NNOperation OPGeoDist ->
 			let desc = collectInputDescs ()
 			in
@@ -231,7 +234,7 @@ and describeCondition dg n =
 		| NNFilter vt ->
 			let descs = collectInputDescs ()
 			in
-			"The value of {" ^ (PortMap.find (PortSingle vt) descs) ^ "}, only if " ^ (PortMap.find PortSingleB descs) ^ " holds true"
+			"The value of {" ^ (PortMap.find (PortSingle vt) descs) ^ "}, only if " ^ (PortMap.find (PortSingleB true) descs) ^ " holds true"
 		| NNSeqNo ->
 			let descs = collectInputDescs ()
 			in
@@ -246,10 +249,14 @@ and describeCondition dg n =
 			in
 			"The sequence number for a value chosen from " ^ bagdesc
 		| NNOperation (OPIntConst c) -> string_of_int c
-		| NNLongOr ->
+		| NNLongOr isVBoolean ->
 			let desc = collectInputDescs ()
 			in
-			"One of the many {" ^ (PortMap.find PortSingleB desc) ^ "} holds"
+			"One of the many {" ^ (PortMap.find (PortSingleB isVBoolean) desc) ^ "} holds"
+		| NNLongAnd isVBoolean ->
+			let desc = collectInputDescs ()
+			in
+			"All of the many {" ^ (PortMap.find (PortSingleB isVBoolean) desc) ^ "} hold"
 		| NNOperation (OPNull _) -> "NULL"
 		| NNOperation OPCoalesce ->
 			let desc = collectInputDescs ()
@@ -262,7 +269,7 @@ and describeCondition dg n =
 		| NNITE vt ->
 			let desc = collectInputDescs ()
 			in
-			"If " ^ (PortMap.find PortSingleB desc) ^ " then " ^ (PortMap.find (PortTrue vt) desc) ^ " else " ^ (PortMap.find (PortFalse vt) desc)
+			"If " ^ (PortMap.find (PortSingleB true) desc) ^ " then " ^ (PortMap.find (PortTrue vt) desc) ^ " else " ^ (PortMap.find (PortFalse vt) desc)
 		| NNOutput _ -> ""
 ;;
 
@@ -393,7 +400,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 			| PortSingle vt ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (srcidpl := Some srcid; srcidbackmappl := Some backmap; vtpl := Some vt)
-			| PortSingleB ->
+			| PortSingleB _ ->
 				let Some (srcid,_,backmap) = cc.(0)
 				in (cntrlpl := Some srcid; cntrlbackmappl := Some backmap)
 	) n ();
@@ -532,7 +539,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 					Some r
 				) n None
 				in res
-			| NNAnd ->
+			| NNAnd _ ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -553,7 +560,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				((if underNot then EWDCompute (OPNot, [EWDCompute (OPIsEq, operands)]) else EWDCompute (OPIsEq, operands)), joinDimLists upwardsdims)
 				
-			| NNLongOr ->
+			| NNLongOr _ ->
 				let Some (r1, r2) = DG.nodefoldedges (fun ((IxM cc, _), _, _) _ ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -693,7 +700,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				(EWDAggregate (agname, IntMap.fold (fun idx d s -> let (_, Some dimname) = b.(0).(idx) in IdtNameSet.add (d, dimname) s) alldims IdtNameSet.empty, r), [ (* freshnewdims *) ])
 			| NNOutput _ -> raise (Failure "Do not expect to see NNOutput at describeNode")
-			| NNOr ->
+			| NNOr _ ->
 				let (operands, upwardsdims) = DG.nodefoldedges (fun ((IxM cc, _), _, _) (ll, zz) ->
 					let Some (srcid, _, backmap) = cc.(0)
 					in
@@ -704,8 +711,8 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 				in
 				((EWDCompute ((if underNot then OPAnd else OPOr), operands)), joinDimLists upwardsdims)
 
-			| NNTrue -> (EWDCompute (OPBoolConst true, []), [])
-			| NNFalse -> (EWDCompute (OPBoolConst false, []), [])
+			| NNTrue _ -> (EWDCompute (OPBoolConst true, []), [])
+			| NNFalse _ -> (EWDCompute (OPBoolConst false, []), [])
 			| NNError -> raise (Failure "Do not expect to see NNError at describeNode")
 			| NNITE _ -> raise (Failure "Do not expect to see NNITE at describeNode")
 			| NNDimEq ->
@@ -769,7 +776,7 @@ let rec dependencyOfAnOutput dg n incomingDimNames =
 	let cbdimrec = moveDimRecOverEdge nadimrec cntrlbackmap
 	in
 	let cntrdesc = match cntrl.nkind.nodeintlbl with
-		| NNAnd ->
+		| NNAnd _ ->
 			let (cadimrec, _) = moveDimRecInsideNode cbdimrec cntrlfwdmap ca.(0)
 			in
 			DG.nodefoldedges (fun ((IxM cc, _), _, _) ll ->
@@ -1380,6 +1387,311 @@ let rec permutations ll =
 
 
 let output_ewr_to_graph oc ewr =
+	let accGr = List.fold_right (fun (tblname, attrname) mm ->
+		let s = try RLMap.find tblname mm with Not_found -> RLSet.empty
+		in
+		RLMap.add tblname (RLSet.add attrname s) mm
+	) RAInput.access_granted RLMap.empty
+	in
+	let isAttrPrivate tblname attrname =
+		if ((String.length tblname) >= 7) && ((String.uppercase (String.sub tblname 0 7)) = "UNKNOWN") then false else
+		let s = try RLMap.find tblname accGr with Not_found -> RLSet.empty
+		in
+		not (RLSet.mem attrname s)
+	in
+	let rec compareEWRs idEquiv ewr1 ewr2 = match ewr1, ewr2 with
+		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
+		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2
+		| EWRCompute (op1, ll1), EWRCompute (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRComputeGen (op1, ll1), EWRComputeGen (op2, ll2) -> (op1 = op2) && ((List.length ll1) = List.length ll2) && (List.for_all2 (compareEWRs idEquiv) (List.sort Pervasives.compare ll1) (List.sort Pervasives.compare ll2))
+		| EWRSeqNo (sidl1, c1), EWRSeqNo (sidl2, c2) -> (compareEWRs idEquiv c1 c2) && (List.for_all2 (fun (s1,id1) (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)) sidl1 sidl2)
+		| EWRAggregate (ag1, ins1, od1), EWRAggregate (ag2, ins2, od2) ->
+			let res =
+			(ag1 = ag2) &&
+			(List.exists (fun insl2 -> List.for_all2 (fun (id1,s1) (id2,s2) -> (s1 = s2) && (idEquiv id1 id2)) (IdtNameSet.elements ins1) insl2) (permutations (IdtNameSet.elements ins2))) &&
+			((List.length od1.quantifiedrows) = (List.length od2.quantifiedrows)) &&
+			(IdtMap.cardinal od1.outputrows = IdtMap.cardinal od2.outputrows) &&
+			(List.for_all2 (fun m1 m2 -> IdtMap.cardinal m1 = IdtMap.cardinal m2) od1.quantifiedrows od2.quantifiedrows) &&
+			(
+				let or1l = IdtMap.bindings od1.outputrows
+				and qr1ll = List.map IdtMap.bindings od1.quantifiedrows
+				and or2lp = permutations (IdtMap.bindings od2.outputrows)
+				and qr2lpl = List.map (fun x -> permutations (IdtMap.bindings x)) od2.quantifiedrows
+				in
+				List.exists (fun or2l ->
+					let idEqN1 id1 id2 = (idEquiv id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) or1l or2l)
+					in
+					let rec selectElem currIdEq currQR1ll currQR2lpl = match currQR1ll, currQR2lpl with
+						| [], [] -> (compareEWRs currIdEq od1.r_outputthing od2.r_outputthing) && (compareEWRAOTs currIdEq od1.r_outputconds od2.r_outputconds)
+						| (z1::z1s), (z2p::z2ps) -> List.exists (fun z2 ->
+							let nextIdEq id1 id2 = (currIdEq id1 id2) || (List.exists2 (fun (ix1,s1) (ix2,s2) -> (ix1 = id1) && (ix2 = id2) && (s1 = s2)) z1 z2)
+							in
+							selectElem nextIdEq z1s z2ps
+						) z2p
+					in
+					selectElem idEqN1 qr1ll qr2lpl
+				) or2lp
+			)
+			in
+			res
+		| _,_ -> false	
+	and compareEWRAOTs idEquiv aot1 aot2 = match aot1, aot2 with
+		| AOTAnd ll1, AOTAnd ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTOr ll1, AOTOr ll2 -> List.for_all2 (compareEWRAOTs idEquiv) ll1 ll2
+		| AOTElem e1, AOTElem e2 -> compareEWRs idEquiv e1 e2
+		| _, _ -> false
+	in
+	let ewridtbl = Hashtbl.create 10
+	and rowidtbl = Hashtbl.create 10
+	and nidprivtbl = Hashtbl.create 10
+	in
+	let getRowId rid =
+		try
+			(Hashtbl.find rowidtbl rid, true)
+		with Not_found -> begin
+			let nid = NewName.get ()
+			in
+			Hashtbl.add rowidtbl rid nid;
+			(nid, false)
+		end
+	and getEWRId ewr =
+		let phid = Hashtbl.fold (fun ewr' ewid res ->
+			match res with
+				| Some _ -> res
+				| None -> if compareEWRs (=) ewr ewr' then Some ewid else None
+		) ewridtbl None
+		in
+		match phid with
+			| Some x -> (x, true)
+			| None -> (
+				let nid = NewName.get ()
+				in
+				Hashtbl.add ewridtbl ewr nid;
+				(nid, false))
+	in
+	output_string oc "digraph {\n";
+	let dotnodeid x = "v_" ^ (NewName.to_string x)
+	and subgrstart x = "subgraph cluster_" ^ (NewName.to_string x)
+	in
+	let collectAttributeUses ewstr rowsOfInterest =
+		let mkAddition tblid attrname roi =
+			try
+				let s = IdtMap.find tblid roi
+				in
+				IdtMap.add tblid (RLSet.add attrname s) roi
+			with Not_found -> roi
+		in
+		let rec cau_ewr ewr roi = match ewr with
+			| EWRInput (attrname, tblid) -> mkAddition tblid attrname roi
+			| EWRExists _ -> roi
+			| EWRCompute (_, ll) 
+			| EWRComputeGen (_, ll) -> List.fold_right cau_ewr ll roi
+			| EWRAggregate (_, remaindims, ewrstr) -> 
+				let roi' = IdtNameSet.fold (fun (tblid, attrname) roicurr ->
+					mkAddition tblid attrname roicurr
+				) remaindims roi
+				in
+				cau_struct ewrstr roi'
+			| EWRSeqNo (stridl, upewr) ->
+				let roi' = List.fold_right (fun (attrname, tblid) roicurr ->
+					mkAddition tblid attrname roicurr
+				) stridl roi
+				in
+				cau_ewr upewr roi'
+		and cau_aotewr aot roi = match aot with
+			| AOTElem e -> cau_ewr e roi
+			| AOTAnd ll | AOTOr ll -> List.fold_right cau_aotewr ll roi
+		and cau_struct ewrstr roi =
+			cau_ewr ewrstr.r_outputthing (cau_aotewr ewrstr.r_outputconds roi)
+		in
+		let roi = IdtSet.fold (fun nid m -> IdtMap.add nid RLSet.empty m) rowsOfInterest IdtMap.empty
+		in
+		cau_struct ewstr roi
+	in
+	let rec doOutputEWR ewr =
+		let (nid, alreadyIn) = getEWRId ewr
+		in
+		if alreadyIn then nid else
+		(begin
+			match ewr with
+			| EWRInput (attrname, tblid) -> raise (Failure "doOutputEWR with EWRInput: we should never come to this place")
+			| EWRExists _ -> Hashtbl.add nidprivtbl nid false
+			| EWRCompute (_, ll)
+			| EWRComputeGen (_, ll) ->
+				let upl = List.map doOutputEWR ll
+				in
+				let uplpriv = List.map (Hashtbl.find nidprivtbl) upl
+				in
+				let nidispriv =
+					let res = List.fold_right (||) uplpriv false
+					in
+					Hashtbl.add nidprivtbl nid res; res
+				in
+				let nodelbl, numberinps = ( match ewr with | EWRCompute (opname, _) -> (match opname with
+					| OPPlus -> "+", false
+					| OPNeg -> "-", false
+					| OPMult -> "*", false
+					| OPIsEq -> "=", false
+					| OPLessThan -> "\\<", true
+					| OPLessEqual -> "&#8804;", true
+					| OPGreaterThan -> "\\>", true
+					| OPGreaterEqual -> "&#8805;", true
+					| OPAnd -> "AND", false
+					| OPOr -> "OR", false
+					| OPNot -> "NOT", false
+					| OPDiv -> "&#247;", true
+					| OPIntConst c -> (string_of_int c), false
+					| OPStringConst s -> s, false
+					| OPRealConst ff -> (string_of_float ff), false
+					| OPBoolConst bb -> (string_of_bool bb), false
+					| OPNull _ -> "NULL", false
+					| OPGeoDist -> "&#916;", true
+					| OPCeiling -> "ceil", false
+					| OPCoalesce -> "coalesce", true
+					| OPITE -> "?:", true
+					| OPTuple strl -> ("[" ^ (String.concat "," strl) ^"]"), true
+					| OPProject prname -> ("&#960;" ^ prname), false
+					| OPOrder takeEqual -> ("CNT(" ^ (if takeEqual then "LE" else "LT") ^ ")"), true
+				)
+					| EWRComputeGen (opnamestr, _) -> opnamestr, true
+				)
+				in
+				(
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					List.iteri (fun ifx upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid));
+						let upidpriv = Hashtbl.find nidprivtbl upid
+						in
+						if (numberinps || upidpriv) then
+						begin
+							output_string oc " [";
+							(if numberinps then output_string oc ("label=" ^ (string_of_int (ifx+1)) ^ " "));
+							(if upidpriv then output_string oc "style=bold color=red");
+							output_string oc "]"
+						end;
+						output_string oc ";\n"
+					) upl
+				)
+			| EWRAggregate (agn, remaindims, ewstr) ->
+				let nodelbl = string_of_aggrname agn
+				in
+				let insideid = doOutputStruct ewstr false
+				and groupids = List.map (fun (tblid, attrname) -> doOutputEWR (EWRInput (attrname, tblid))) (IdtNameSet.elements remaindims)
+				in
+				let groupprivs = List.map (Hashtbl.find nidprivtbl) groupids
+				in
+				let gbidispriv = List.fold_right (||) groupprivs false
+				in
+				let nidispriv = gbidispriv || (Hashtbl.find nidprivtbl insideid)
+				in
+				let gbid = NewName.get ()
+				in
+				(
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ((dotnodeid gbid) ^ " [shape=box style=" ^ (if gbidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"GROUP BY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ nodelbl ^ "\" fillcolor=white];\n");
+					output_string oc ((dotnodeid gbid) ^ " -> " ^ (dotnodeid nid) ^ (if gbidispriv then "[style=bold color=red]" else "") ^ ";\n");
+					output_string oc ((dotnodeid insideid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl insideid then " [style=bold color=red]" else "") ^ ";\n");
+					List.iter (fun upid ->
+						output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid gbid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n")
+					) groupids
+				)
+			| EWRSeqNo (stridl, upewr) ->
+				let upid = doOutputEWR upewr
+				and groupids = List.map (fun (attrname, tblid) -> doOutputEWR (EWRInput (attrname, tblid))) stridl
+				and keyid = NewName.get ()
+				in
+				let keyispriv = List.fold_right (||) (List.map (Hashtbl.find nidprivtbl) groupids) false
+				and upispriv = Hashtbl.find nidprivtbl upid
+				in
+				let nidispriv = upispriv || keyispriv
+				in
+				(
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ((dotnodeid keyid) ^ " [shape=box style=" ^ (if keyispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"KEY\" fillcolor=white];\n");
+					output_string oc ((dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"SeqNo\" fillcolor=white];\n");
+					output_string oc ((dotnodeid keyid) ^ " -> " ^ (dotnodeid nid) ^ (if keyispriv then " [style=bold color=red]" else "") ^ ";\n");
+					output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if upispriv then " [style=bold color=red]" else "") ^ ";\n");
+					List.iteri (fun idx gid ->
+						output_string oc ((dotnodeid gid) ^ " -> " ^ (dotnodeid keyid) ^ " [label=" ^ (string_of_int (idx+1)) ^ (if Hashtbl.find nidprivtbl gid then " style=bold color=red" else "") ^ "];\n")
+					) groupids
+				)
+		end;
+		nid)
+	and doOutputAOTEWR aot = match aot with
+		| AOTElem x -> doOutputEWR x
+		| AOTAnd ll | AOTOr ll ->
+			let upl = List.map doOutputAOTEWR ll
+			in
+			let nid = NewName.get ()
+			and nidispriv = List.fold_right (||) (List.map (Hashtbl.find nidprivtbl) upl) false
+			in
+			Hashtbl.add nidprivtbl nid nidispriv;
+			output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ (match aot with AOTAnd _ -> "AND" | _ -> "OR") ^ "\" fillcolor=white];\n");
+			List.iter (fun upid ->
+				output_string oc ((dotnodeid upid) ^ " -> " ^ (dotnodeid nid) ^ (if Hashtbl.find nidprivtbl upid then " [style=bold color=red]" else "") ^ ";\n");
+			) upl;
+			nid
+	and doOutputStruct ewstr atBeginning =
+		let getIdtSet m = IdtSet.of_list (List.map fst (IdtMap.bindings m))
+		in
+		let interestingRows = List.fold_right (fun m s -> IdtSet.union (getIdtSet m) s) ewstr.quantifiedrows (getIdtSet ewstr.outputrows)
+		in
+		let existAttrs = collectAttributeUses ewstr interestingRows
+		in
+		(if (not atBeginning) then
+		begin
+			let thrid = NewName.get ()
+			in
+			output_string oc ("subgraph cluster_" ^ (NewName.to_string thrid) ^ " {\n style=filled;\nfillcolor=cyan\n\n")
+		end);
+		let drawRowIds0 = IdtMap.mapi (fun k s -> doOutputRow atBeginning true k s (IdtMap.find k existAttrs)) ewstr.outputrows
+		in
+		let (drawRowIds,_) = List.fold_left (fun (m,bb) qrows -> (IdtMap.mapi (fun k s -> doOutputRow false bb k s (IdtMap.find k existAttrs)) qrows, not bb)) (drawRowIds0, true) ewstr.quantifiedrows
+		in
+		let resid = doOutputEWR ewstr.r_outputthing
+		and condid = doOutputAOTEWR ewstr.r_outputconds
+		in
+		let nid = NewName.get ()
+		in
+		let resispriv = Hashtbl.find nidprivtbl resid
+		and condispriv = Hashtbl.find nidprivtbl condid
+		in
+		let nidispriv = resispriv || condispriv
+		in
+		Hashtbl.add nidprivtbl nid nidispriv;
+		output_string oc ((dotnodeid nid) ^ "[shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"Filter\" fillcolor=" ^ (if atBeginning then "blue" else "white") ^ "];\n");
+		output_string oc ((dotnodeid resid) ^ " -> " ^ (dotnodeid nid) ^ " [label=1" ^ (if resispriv then " style=bold color=red" else "") ^ "];\n");
+		output_string oc ((dotnodeid condid) ^ " -> " ^ (dotnodeid nid) ^ " [label=2" ^ (if condispriv then " style=bold color=red" else "") ^ "];\n");
+		(if (not atBeginning) then
+		begin
+			output_string oc ("}\n")
+		end);
+		nid
+	and doOutputRow isFinalOut isExists rid tbln attrset =
+		let (oid, alreadyIn) = getRowId rid
+		in
+		if alreadyIn then oid
+		else
+		begin
+			output_string oc ((subgrstart oid) ^ " {\n  style=filled;\n  label=\"" ^ tbln ^ "\";\n  fillcolor=" ^ (if isFinalOut then "red" else if isExists then "yellow" else "green") ^";\n");
+				RLSet.iter (fun attrname ->
+					let (nid,_) = getEWRId (EWRInput (attrname, rid))
+					in
+					let nidispriv = isAttrPrivate tbln attrname
+					in
+					Hashtbl.add nidprivtbl nid nidispriv;
+					output_string oc ("  " ^ (dotnodeid nid) ^ " [shape=box style=" ^ (if nidispriv then "\"filled,bold\" color=red" else "filled") ^ " label=\"" ^ attrname ^ "\" fillcolor=white];\n")
+				) attrset;
+			output_string oc "}\n";
+			oid
+		end
+	in
+	ignore (doOutputStruct ewr true);
+	output_string oc "}\n"
+;;
+
+let output_ewr_to_graph_without_deps oc ewr =
 	let rec compareEWRs idEquiv ewr1 ewr2 = match ewr1, ewr2 with
 		| EWRInput (s1,id1), EWRInput (s2,id2) -> (s1 = s2) && (idEquiv id1 id2)
 		| EWRExists id1, EWRExists id2 -> idEquiv id1 id2
@@ -1807,5 +2119,670 @@ let output_ewd oc ewd =
 	doOutputEWD IdtMap.empty ewd;
 	Format.pp_print_break ftr 0 1;
 	Format.pp_print_flush ftr ();
+;;
+
+type studyleakstype =
+	SLTAnd of studyleakstype list |
+	SLTOr of studyleakstype list |
+	SLTFilter of string |
+	SLTCheck of string |
+	SLTSymEncFail of NewName.idtype
+;;
+
+let rec string_of_studyleakstype = function
+	| SLTAnd ll -> if ll = [] then "TRUE" else "AND[" ^ (String.concat ", " (List.map string_of_studyleakstype ll)) ^ "]"
+	| SLTOr ll -> if ll = [] then "FALSE" else "OR{" ^ (String.concat ", " (List.map string_of_studyleakstype ll)) ^ "}"
+	| SLTFilter s -> "Filter(" ^ s ^ ")"
+	| SLTCheck s -> "Check(" ^ s ^ ")"
+	| SLTSymEncFail id -> "FailSymEnc(" ^ (NewName.to_string id) ^ ")"
+;;
+
+module SLTSet = MySet(struct type t = studyleakstype let compare = Pervasives.compare end);;
+
+
+type studyleaksinputs =
+	SLINormal of string
+;;
+
+module SLIMap = MyMap(struct type t = studyleaksinputs let compare = Pervasives.compare end);;
+
+type studyleaksoutputs =
+	SLONormal of string |
+	SLOTraffic |
+	SLOSymEncKey of NewName.idtype
+;;
+
+module SLOMap = MyMap(struct type t = studyleaksoutputs let compare = Pervasives.compare end);;
+
+let writeFlowChecksFromSLT dg desc oc =
+	output_string oc "{\n  \"inputs\": [";
+	let isFirst = ref true
+	in
+	SLIMap.iter (fun inpElem _ ->
+		(if not !isFirst then output_string oc ",");
+		isFirst := false;
+		output_string oc "\n    \"";
+		output_string oc (match inpElem with SLINormal x -> x);
+		output_string oc "\""
+	) desc;
+	let transpDesc = SLIMap.fold (fun inpElem inpDesc res ->
+		SLOMap.fold (fun outpElem ioresults res' ->
+			let resInps = try SLOMap.find outpElem res' with Not_found -> SLIMap.empty
+			in
+			let resInps' = SLIMap.add inpElem ioresults resInps
+			in
+			SLOMap.add outpElem resInps' res'
+		) inpDesc res
+	) desc SLOMap.empty
+	in
+	output_string oc "\n  ],\n  \"outputs\": [";
+	let isFirstOutput = ref true
+	in
+	let outputSLT slt =
+		let rec outputSLT' parens slt =
+		match slt with
+			| SLTFilter s -> output_string oc (s ^ " is passed")
+			| SLTCheck s -> output_string oc (s ^ " holds")
+			| SLTSymEncFail eid -> output_string oc ("Encryption no. " ^ (NewName.to_string eid) ^ " fails")
+			| SLTAnd ll
+			| SLTOr ll ->
+				let isAnd = (match slt with SLTAnd _ -> true | _ -> false)
+				in
+				if List.length ll = 0 then
+				begin
+					output_string oc (if isAnd then "always" else "never")
+				end
+				else
+				begin
+					let needParens = parens && (List.length ll > 1)
+					in
+					(if needParens then output_string oc "(");
+					let isNotFirst = ref false
+					in
+					List.iter (fun subslt ->
+						(if !isNotFirst then
+						begin
+							output_string oc (if isAnd then " AND " else " OR ")
+						end);
+						outputSLT' true subslt;
+						isNotFirst := true;
+					) ll;
+					(if needParens then output_string oc ")")
+				end
+		in
+		if slt = SLTAnd [] then output_string oc "\"always\": null"
+		else if slt = SLTOr [] then output_string oc "\"never\": null"
+		else
+		begin
+			output_string oc "\"if\": \"";
+			outputSLT' false slt;
+			output_string oc "\""
+		end
+	in
+	SLOMap.iter (fun outpElem resInps ->
+		(if not !isFirstOutput then output_string oc ",");
+		isFirstOutput := false;
+		output_string oc "\n    {\n      \"";
+		output_string oc (match outpElem with SLONormal s -> s | SLOTraffic -> "PUBLIC NETWORK MESSAGES" | SLOSymEncKey id -> "Use of encryption key at encryption no. " ^ (NewName.to_string id));
+		output_string oc "\": [";
+		let isFirstInput = ref true
+		in
+		SLIMap.iter (fun inpElem slt ->
+			(if not !isFirstInput then output_string oc ",");
+			isFirstInput := false;
+			output_string oc "\n        {";
+			outputSLT slt;
+(*
+			output_string oc ", \"input element\": \"";
+			output_string oc (match inpElem with SLINormal s -> s);
+			output_string oc "\"";
+*)
+			output_string oc "}"
+		) resInps;
+		output_string oc "\n      ]\n    }"
+	) transpDesc;
+	output_string oc "\n  ]\n}\n"
+;;
+
+let pathFromToFilter dg inpNodes describeFilter =
+	let string_of_sltsetlist ss =
+		"OR{" ^ (String.concat ", " (List.map (fun slts -> "AND[" ^ (String.concat ", " (List.map string_of_studyleakstype (SLTSet.elements slts))) ^ "]") ss)) ^ "}"
+	in
+	let initials = IdtSet.fold (fun nid -> IdtMap.add nid [SLTSet.empty]) inpNodes IdtMap.empty
+	in
+	let doNotPassFlow n prt =
+		let d = n.nkind.nodelabel
+		in
+		if ((String.length d) >= 3) && ((String.sub d 0 3) = "is_") then true else
+		match prt with
+		| PortOperInput opinpnum -> (
+			let ll = match n.nkind.nodeintlbl with
+		(*	| NNOperation OPEncrypt -> [1;2]
+			| NNOperation OPDecrypt -> [1;2]
+			| NNOperation (OPABEncrypt _) -> [1;2]
+			| NNOperation OPABDecrypt -> [1;2] *)
+			| _ -> []
+		in
+		List.mem opinpnum ll
+		)
+		| _ -> false
+	in
+	let finals = GrbOptimize.TopolSorter.fold (fun nid currFormulas ->
+		let n = DG.findnode nid dg
+		in
+		let allIncomings = DG.nodefoldedges (fun ((IxM cc, eid),_,prt) ll -> (* do special flow cases here *)
+			if doNotPassFlow n prt then ll else
+			let Some (srcid,_,_) = cc.(0)
+			in
+			let srcll = try IdtMap.find srcid currFormulas with Not_found -> []
+			in
+			srcll @ ll
+		) n (try IdtMap.find nid currFormulas with Not_found -> [])
+		in
+		let allIns1 = match (describeFilter n) with
+			| None -> allIncomings
+			| Some slt -> List.map (SLTSet.add slt) allIncomings
+		in
+		let allIns2 = List.sort_uniq Pervasives.compare allIns1
+		in
+		let allIns3 = List.filter (fun oneSet ->
+			List.for_all (fun otherSet -> not ((oneSet <> otherSet) && (SLTSet.subset otherSet oneSet))) allIns2
+		) allIns2
+		in
+		print_endline ("Node no. " ^ (NewName.to_string nid) ^ ", allIns2 = " ^ (string_of_sltsetlist allIns2) ^ ", allIns3 = " ^ (string_of_sltsetlist allIns3));
+		IdtMap.add nid allIns3 currFormulas
+	) dg initials
+	in
+	IdtMap.map (fun ss -> SLTOr (List.map (fun sss -> SLTAnd (SLTSet.elements sss)) ss)) finals
+;;
+
+let answersToSLI dg answers =
+	let desc = ref SLIMap.empty
+	in
+	IdtMap.iter (fun inpNodeId _ ->
+		let inpNode = DG.findnode inpNodeId dg
+		in
+		let inpName = inpNode.nkind.nodelabel
+		in
+		desc := SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) SLOMap.empty !desc
+	) answers;
+	let transpAnswers = IdtMap.fold (fun inpNodeId inpAnswers res ->
+		RLMap.fold (fun outpName ioresults res' ->
+			let resInps = try RLMap.find outpName res' with Not_found -> IdtMap.empty
+			in
+			let resInps' = IdtMap.add inpNodeId ioresults resInps
+			in
+			RLMap.add outpName resInps' res'
+		) inpAnswers res
+	) answers RLMap.empty
+	in
+	RLMap.iter (fun outpName resInps ->
+		let outpElem =
+			if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
+			else if (String.sub outpName 0 6) = "Key of" then
+				let preflen = String.length "Key of encryption "
+				in
+				SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+			else SLONormal outpName
+		in
+		IdtMap.iter (fun inpNodeId (withAll, withNone, allResults) ->
+			let inpNode = DG.findnode inpNodeId dg
+			in
+			let inpName = inpNode.nkind.nodelabel
+			in
+			let inpElem = SLINormal (String.sub inpName 6 ((String.length inpName) - 6))
+			in
+			let currFormula = try SLOMap.find outpElem (SLIMap.find inpElem !desc) with Not_found -> SLTOr []
+			in
+			let nextFormula =
+			if withNone then SLTOr [] else
+			if (not withAll) then SLTAnd [] else
+			begin
+				SLTOr (List.map (fun (badFuns, badChecks) ->
+					SLTAnd (IdtSet.fold (fun filterNodeId ll ->
+						let filterNode = DG.findnode filterNodeId dg
+						in
+						let filterElem = if (match filterNode.nkind.nodeintlbl with NNOperation OPEncrypt | NNOperation (OPABEncrypt _) -> true | _ -> false) then SLTSymEncFail filterNode.id else SLTFilter (filterNode.nkind.nodelabel)
+						in
+						filterElem :: ll
+					) badFuns
+					(IdtSet.fold (fun checkNodeId ll ->
+						let checkNode = DG.findnode checkNodeId dg
+						in
+						let checkname = checkNode.nkind.nodelabel
+						in
+						(SLTCheck checkname) :: ll
+					) badChecks []) )
+				) allResults)
+			end
+			in
+			desc := SLIMap.add inpElem (SLOMap.add outpElem (SLTOr [currFormula; nextFormula]) (SLIMap.find inpElem !desc)) !desc
+		) resInps;
+	) transpAnswers;
+	!desc
+;;
+
+let analyseEncryptionFailures dg beforeFailureAnalysis =
+	let rec markThingsHappening c pred ss =
+		match ss with
+		| SLTFilter _ | SLTCheck _ | SLTSymEncFail _ -> if pred ss then c else ss
+		| SLTAnd ll -> SLTAnd (List.map (markThingsHappening c pred) ll)
+		| SLTOr ll -> SLTOr (List.map (markThingsHappening c pred) ll)
+	in
+	let markThingsFailing = markThingsHappening (SLTAnd [])
+	in
+	let sslEnterLevel = ref (-1)
+	in
+	let sslTab () = 
+		let rec wf n = if n <= 0 then "" else "    " ^ (wf (n-1))
+		in
+		wf !sslEnterLevel
+	in
+	let rec simplifyStudyLeaks ss = 
+		sslEnterLevel := !sslEnterLevel + 1;
+		print_endline ((sslTab ()) ^ "start simplifyStudyLeaks: " ^ (string_of_studyleakstype ss));
+		let res =
+		begin
+		match ss with
+		| SLTSymEncFail _
+		| SLTCheck _
+		| SLTFilter _ -> ss
+		| SLTAnd ll
+		| SLTOr ll ->
+			let isAnd = (match ss with SLTAnd _ -> true | SLTOr _ -> false)
+			in
+			let llnew = List.map simplifyStudyLeaks ll
+			in
+			let rec flatten xx = match xx with
+				| [] -> []
+				| x :: xs -> (match x,isAnd with
+					| SLTAnd y, true
+					| SLTOr y, false -> y @ (flatten xs)
+					| SLTAnd [y], _
+					| SLTOr [y], _ -> y :: (flatten xs)
+					| _ -> x :: (flatten xs)
+				)
+			in
+			print_endline ((sslTab ()) ^ "Going to flatten the list " ^ (String.concat " | " (List.map string_of_studyleakstype llnew)));
+			let llnew2 = flatten llnew
+			in
+			print_endline ((sslTab ()) ^ "This resulted in the list " ^ (String.concat " | " (List.map string_of_studyleakstype llnew2)));
+			if isAnd && (List.mem (SLTOr []) llnew2) then SLTOr []
+			else if (not isAnd) && (List.mem (SLTAnd []) llnew2) then SLTAnd []
+			else
+			let llnew3 = List.sort_uniq Pervasives.compare llnew2
+			in
+			if (llnew3 <> []) && (List.tl llnew3 = []) then List.hd llnew3 else
+			if isAnd then SLTAnd llnew3 else SLTOr llnew3
+		end
+		in
+		print_endline ((sslTab ()) ^ "result is " ^ (string_of_studyleakstype res));
+		sslEnterLevel := !sslEnterLevel - 1;
+		res
+	in
+	let rec checkImplication ssLeft ssRight =
+		sslEnterLevel := !sslEnterLevel + 1;
+		print_endline ((sslTab ()) ^ "Calling checkImplication with " ^ (string_of_studyleakstype ssLeft) ^ " and " ^ (string_of_studyleakstype ssRight));
+		let rec (collectAtoms :  studyleakstype -> SLTSet.t list) = fun ss -> match ss with
+			| SLTFilter _
+			| SLTCheck _
+			| SLTSymEncFail _ -> [SLTSet.singleton ss]
+			| SLTAnd ll ->
+				 let (resl : SLTSet.t list list) = List.map collectAtoms ll
+				 in
+				 List.map (List.fold_left SLTSet.union SLTSet.empty) (makeProducts (List.map Array.of_list resl))
+			| SLTOr ll -> List.concat (List.map collectAtoms ll)
+		in
+		let res = List.for_all (fun atomset ->
+			print_endline ((sslTab ()) ^ "Considering the set of atoms {" ^ (String.concat ", " (List.map string_of_studyleakstype (SLTSet.elements atomset))) ^ "}" );
+			simplifyStudyLeaks (markThingsFailing (fun atom -> SLTSet.mem atom atomset) ssRight) <> SLTAnd []
+		) (collectAtoms ssLeft)
+		in
+		print_endline ((sslTab ()) ^ "The result is " ^ (string_of_bool res));
+		sslEnterLevel := !sslEnterLevel - 1;
+		res
+	in	
+	let desc = ref beforeFailureAnalysis
+	in
+	
+	print_endline "This is before simplification";
+	SLIMap.iter (fun inpElem slomap ->
+		print_endline ("Input object: " ^ (match inpElem with SLINormal s -> s));
+		SLOMap.iter (fun outpElem v ->
+			print_endline ("Output object: " ^ (match outpElem with SLONormal s -> s | SLOTraffic -> "NETWORK TRAFFIC" | SLOSymEncKey id -> ("Encryption key for " ^ (NewName.to_string id))) ^ ", V = " ^ (string_of_studyleakstype v) );
+		) slomap
+	) !desc;
+	print_newline ();
+	
+	SLIMap.iter (fun inpElem slomap ->
+		let m = ref slomap
+		in
+		SLOMap.iter (fun outpElem v ->
+			m := SLOMap.add outpElem (simplifyStudyLeaks v) !m
+		) slomap;
+		desc := SLIMap.add inpElem !m !desc
+	) !desc;
+	
+	print_endline "This is after simplification";
+	SLIMap.iter (fun inpElem slomap ->
+		print_endline ("Input object: " ^ (match inpElem with SLINormal s -> s));
+		SLOMap.iter (fun outpElem v ->
+			print_endline ("Output object: " ^ (match outpElem with SLONormal s -> s | SLOTraffic -> "NETWORK TRAFFIC" | SLOSymEncKey id -> ("Encryption key for " ^ (NewName.to_string id))) ^ ", V = " ^ (string_of_studyleakstype v) );
+		) slomap
+	) !desc;
+	print_newline ();
+	let oc = open_out "flowcheckbeforeenc"
+	in
+	writeFlowChecksFromSLT dg !desc oc;
+	close_out oc;
+	
+	let foundFailingEncryptions = ref IdtSet.empty
+	and makeFailEncIter = ref true
+	in
+	while !makeFailEncIter do
+		let failingEncryptions = SLIMap.fold (fun inpElem slomap currset ->
+			SLOMap.fold (fun outpElem sskey currset2 ->
+				match outpElem with
+					| SLOSymEncKey encid ->
+					begin
+						if sskey = SLTOr [] then currset2 else
+						let sstraf = try SLOMap.find SLOTraffic slomap with Not_found -> SLTOr []
+						in
+						if checkImplication sskey sstraf then currset2 else IdtSet.add encid currset2
+					end
+					| _ -> currset2
+			) slomap currset
+		) !desc IdtSet.empty
+		in
+		let markEncsFailing = markThingsFailing (function SLTFilter _ | SLTCheck _ -> false | SLTSymEncFail x -> IdtSet.mem x failingEncryptions)
+		in
+		desc := SLIMap.fold (fun inpName slomap curr ->
+			SLIMap.add inpName (
+				SLOMap.fold (fun outpName v curr2 ->
+					SLOMap.add outpName (simplifyStudyLeaks (markEncsFailing v)) curr2
+				) slomap SLOMap.empty
+			) curr
+		) !desc SLIMap.empty;
+		let newFoundFailingEncryptions = IdtSet.union !foundFailingEncryptions failingEncryptions
+		in
+		if IdtSet.is_empty (IdtSet.diff newFoundFailingEncryptions !foundFailingEncryptions) then
+		begin
+			makeFailEncIter := false
+		end else
+		begin
+			makeFailEncIter := true;
+			foundFailingEncryptions := newFoundFailingEncryptions
+		end
+	done;
+	desc := SLIMap.map (fun slomap ->
+		SLOMap.map (fun v ->
+			simplifyStudyLeaks (markThingsHappening (SLTOr []) (function SLTSymEncFail _ -> true | _ -> false) v)
+		) slomap
+	) !desc;
+	!desc
+;;
+
+let processChecks dg =
+	let (checkNodes, checkNodeNames) = DG.foldnodes (fun n (ss, rs) ->
+		let d = n.nkind.nodelabel
+		in
+		if (n.nkind.outputtype = VBoolean) && ((String.length d) >= 3) && ((String.sub d 0 3) = "is_") then ((IdtMap.add n.id d ss), (RLMap.add d (IdtSet.add n.id (try RLMap.find d rs with Not_found -> IdtSet.empty)) rs)) else (ss,rs)
+	) dg (IdtMap.empty, RLMap.empty)
+	in
+	let namesAsList = RLMap.fold (fun k _ ll -> k :: ll ) checkNodeNames []
+	in
+	(namesAsList, List.map (fun selChecks ->
+		if selChecks = [] then ([], dg)
+		else
+		let dg0 = List.fold_right (fun selCheckName ->
+			IdtSet.fold (fun nid dgcurr ->
+				let nold = DG.findnode nid dg
+				in
+				let nnew = {nold with nkind = nkFalse; inputs = PortMap.empty; inputindextype = nold.outputindextype; ixtypemap = identityIndexMap () nold.outputindextype}
+				in
+				DG.changenode nnew dgcurr
+			) (RLMap.find selCheckName checkNodeNames)
+		) selChecks dg
+		in
+		let dg1 = GrbOptimize.removeDead ( (* fst *) (GrbOptimize.simplifyArithmetic dg0))
+		in
+		let oc = open_out ("finalgraph_" ^ (String.concat "_" selChecks) ^ ".dot")
+		in
+		GrbPrintWithCFlow.printgraph oc dg1;
+		close_out oc;
+		(selChecks, dg1)
+	) (subsetlist namesAsList))
+;;
+
+let checkFlows dg =
+	let allInputNodes = DG.foldnodes (fun n ss ->
+		match n.nkind.nodeintlbl with
+			| NNInput _ ->
+				let inpName = n.nkind.nodelabel
+				in
+				if ((String.length inpName) >= 9) && ((String.sub inpName 0 9) = "Input IV_") then ss else IdtSet.add n.id ss
+			| _ -> ss
+	) dg IdtSet.empty
+	and allOutputNodes = DG.foldnodes (fun n ss ->
+		match n.nkind.nodeintlbl with
+			| NNOutput _ -> IdtSet.add n.id ss
+			| _ -> ss
+	) dg IdtSet.empty
+	in
+	let determineFilter n =
+		if n.nkind.nodeintlbl = NNOperation OPEncrypt then Some (SLTSymEncFail n.id) else
+		if (match n.nkind.nodeintlbl with NNOperation (OPABEncrypt _ ) -> true | _ -> false) then Some (SLTSymEncFail n.id) else
+		let d = n.nkind.nodelabel
+		in
+		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then Some (SLTFilter d) else 
+		if ((String.length d) >= 4) && ((String.sub d 0 4) = "hash") then Some (SLTFilter d) else None
+	in
+	let (allChecks, checkResults) = processChecks dg
+	in
+	let allChecksAsSet = RLSet.of_list allChecks
+	in
+	let flowsForRemovedChecks = List.map (fun (removedChecks, simplerDg) ->
+		print_endline ("Flowcheck, with the following set to false: " ^ (String.concat ", " removedChecks));
+		let additionalSLTs = List.map (fun s -> SLTCheck s) (RLSet.elements (List.fold_right RLSet.remove removedChecks allChecksAsSet))
+		in
+		let flowsForInpNodes = IdtSet.fold (fun inpnodeid mm ->
+			print_endline ("Starting Flowcheck for input node " ^ (NewName.to_string inpnodeid));
+			let inpToOutp1 = pathFromToFilter simplerDg (IdtSet.singleton inpnodeid) determineFilter
+			in
+			let inpToOutp2 = IdtMap.filter (fun nid _ -> IdtSet.mem nid allOutputNodes) inpToOutp1
+			in
+			(* from output nodes to SLO-s *)
+			let inpToOutp4 = IdtMap.fold (fun outpId v sltm ->
+				let outpNames =
+					let n = DG.findnode outpId dg
+					in
+					match n.nkind.nodeintlbl with NNOutput c -> c | _ -> RLSet.empty
+				in
+				let sltmnew = RLSet.fold (fun outpName sltmcurr ->
+					let sloElem =
+						if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
+						else if (String.sub outpName 0 6) = "Key of" then
+							let preflen = String.length "Key of encryption "
+							in
+							SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+							else SLONormal outpName
+					in
+					let sloV = try SLOMap.find sloElem sltmcurr with Not_found -> SLTOr []
+					in
+					let newV = match v,sloV with (SLTOr l1), (SLTOr l2) -> SLTOr (l1 @ l2)
+					in
+					SLOMap.add sloElem newV sltmcurr
+				) outpNames sltm
+				in
+				sltmnew
+			) inpToOutp2 SLOMap.empty
+			in
+			IdtMap.add inpnodeid inpToOutp4	mm
+		) allInputNodes IdtMap.empty
+		in
+		(* from input nodes to SLIs *)
+		let flowsForSlis = IdtMap.fold (fun inpNodeId slomap slim ->
+			let inpNode = DG.findnode inpNodeId dg
+			in
+			let inpName = inpNode.nkind.nodelabel
+			in
+			SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) slomap slim
+		) flowsForInpNodes SLIMap.empty
+		in
+		(additionalSLTs, flowsForSlis)
+	) checkResults
+	in
+	flowsForRemovedChecks
+;;
+	
+(*	
+	let flowsForInpNodes = IdtSet.fold (fun inpnodeid mm ->
+		print_endline ("Starting Flowcheck for input node " ^ (NewName.to_string inpnodeid));
+		let flowForAnInpNodeAsList = List.map (fun (removedChecks, simplerDg) ->
+			print_endline ("Flowcheck, with the following set to false: " ^ (String.concat ", " removedChecks));
+			let inpToOutp1 = pathFromToFilter simplerDg (IdtSet.singleton inpnodeid) determineFilter
+			in
+			let inpToOutp2 = IdtMap.filter (fun nid _ -> IdtSet.mem nid allOutputNodes) inpToOutp1
+			in
+			let additionalSLTs = List.map (fun s -> SLTCheck s) (RLSet.elements (List.fold_right RLSet.remove removedChecks allChecksAsSet))
+			in
+			let inpToOutp3 = IdtMap.map (fun (SLTOr osltConjs) ->
+				let nOsltConjs = List.map (fun (SLTAnd ll) -> SLTAnd (additionalSLTs @ ll)) osltConjs
+				in
+				SLTOr nOsltConjs
+			) inpToOutp2
+			in
+			(* from output nodes to SLO-s *)
+			let inpToOutp4 = IdtMap.fold (fun outpId v sltm ->
+				let outpNames =
+					let n = DG.findnode outpId dg
+					in
+					match n.nkind.nodeintlbl with NNOutput c -> c | _ -> RLSet.empty
+				in
+				let sltmnew = RLSet.fold (fun outpName sltmcurr ->
+					let sloElem =
+						if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
+						else if (String.sub outpName 0 6) = "Key of" then
+							let preflen = String.length "Key of encryption "
+							in
+							SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+							else SLONormal outpName
+					in
+					let sloV = try SLOMap.find sloElem sltmcurr with Not_found -> SLTOr []
+					in
+					let newV = match v,sloV with (SLTOr l1), (SLTOr l2) -> SLTOr (l1 @ l2)
+					in
+					SLOMap.add sloElem newV sltmcurr
+				) outpNames sltm
+				in
+				sltmnew
+			) inpToOutp3 SLOMap.empty
+			in
+			inpToOutp4
+		) checkResults
+		in
+		let flowForAnInpNode = List.fold_right (SLOMap.merge (fun _ vl vr -> match vl,vr with
+			| None, None -> None
+			| Some x, None -> Some x
+			| None, Some x -> Some x
+			| Some (SLTOr l1), Some (SLTOr l2) -> Some (SLTOr (l1 @ l2))
+		)) flowForAnInpNodeAsList SLOMap.empty
+		in
+		IdtMap.add inpnodeid flowForAnInpNode mm
+	) allInputNodes IdtMap.empty
+	in
+	(* from input nodes to SLIs *)
+	let flowsForSlis = IdtMap.fold (fun inpNodeId slomap slim ->
+		let inpNode = DG.findnode inpNodeId dg
+		in
+		let inpName = inpNode.nkind.nodelabel
+		in
+		SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) slomap slim
+	) flowsForInpNodes SLIMap.empty
+	in
+	flowsForSlis
+;;
+*)
+
+let addAdditionalSLTs analResultList =
+	let string_of_sltsetlist ss =
+		"OR{" ^ (String.concat ", " (List.map (fun slts -> "AND[" ^ (String.concat ", " (List.map string_of_studyleakstype (SLTSet.elements slts))) ^ "]") ss)) ^ "}"
+	in
+	let rec simplifyOrAnds slt =
+		let surroundAtoms f ll = List.map (fun s -> match s with SLTOr _ | SLTAnd _ -> s | _ -> f s) ll
+		in
+		let surroundAtomsOr = surroundAtoms (fun s -> SLTOr [s])
+		and surroundAtomsAnd = surroundAtoms (fun s -> SLTAnd [s])
+		in
+		let rec simplifySingleton s = match s with SLTOr [ss] | SLTAnd [ss] -> simplifySingleton ss | _ -> s
+		in
+		let rec flattenORs = function
+		| [] -> []
+		| (x :: xs) -> (match x with SLTOr l -> flattenORs (l @ xs) | _ -> x :: (flattenORs xs))
+		in
+		let rec flattenANDs = function
+		| [] -> []
+		| (x :: xs) -> (match x with SLTAnd l -> flattenANDs (l @ xs) | _ -> x :: (flattenANDs xs))
+		in
+		let slt' = simplifySingleton slt
+		in
+		match slt' with
+		| SLTOr ll ->
+			let llnew = flattenORs (List.map simplifyOrAnds ll)
+			in
+			let llnew2 = List.map (fun (SLTAnd l) -> SLTSet.of_list l) (surroundAtomsAnd llnew)
+			in
+			let llnew3 = List.filter (fun oneSet ->
+				List.for_all (fun otherSet -> not ((oneSet <> otherSet) && (SLTSet.subset otherSet oneSet))) llnew2
+			) llnew2
+			in
+			print_endline ("llnew2 = " ^ (string_of_sltsetlist llnew2) ^ ", llnew3 = " ^ (string_of_sltsetlist llnew3));
+			simplifySingleton (SLTOr (List.map (fun s -> simplifySingleton (SLTAnd (SLTSet.elements s))) llnew3))
+		| SLTAnd ll ->
+			let llnew = flattenANDs (List.map simplifyOrAnds ll)
+			in
+			let llnew2 = List.map (fun (SLTOr l) -> SLTSet.of_list l) (surroundAtomsOr llnew)
+			in
+			let llnew3 = List.filter (fun oneSet ->
+				List.for_all (fun otherSet -> not ((oneSet <> otherSet) && (SLTSet.subset otherSet oneSet))) llnew2
+			) llnew2
+			in
+			print_endline ("llnew2 = " ^ (string_of_sltsetlist llnew2) ^ ", llnew3 = " ^ (string_of_sltsetlist llnew3));
+			simplifySingleton (SLTAnd (List.map (fun s -> simplifySingleton (SLTOr (SLTSet.elements s))) llnew3))
+		| _ -> slt'
+	in
+	let interm = List.fold_right (fun (additionalSLTs, analResult) collResult ->
+		let addResult = if additionalSLTs = [] then analResult else SLIMap.map (fun slomap ->
+			SLOMap.map (fun cond -> match cond with
+				| SLTOr osltConjs ->
+					let nOsltConjs = List.map (fun cond' -> match cond' with SLTAnd ll -> SLTAnd (additionalSLTs @ ll) | _ -> SLTAnd (cond' :: additionalSLTs)) osltConjs
+					in
+					SLTOr nOsltConjs
+				| SLTAnd xx -> SLTAnd (additionalSLTs @ xx)
+				| _ -> SLTAnd (cond :: additionalSLTs)
+			) slomap
+		) analResult
+		in
+		SLIMap.merge (fun _ vl vr -> match vl,vr with
+			| None, None -> None
+			| Some x, None -> Some x
+			| None, Some x -> Some x
+			| Some addslomap, Some currslomap -> Some (SLOMap.merge (fun _ vl vr -> match vl,vr with
+				| None, None -> None
+				| Some x, None -> Some x
+				| None, Some x -> Some x
+				| Some x, Some y -> Some (match x,y with
+					| SLTOr l1, SLTOr l2 -> SLTOr (l1 @ l2)
+					| SLTAnd [], _ -> SLTAnd []
+					| _, SLTAnd [] -> SLTAnd []
+					| SLTOr l1, _ -> SLTOr (y :: l1)
+					| _, SLTOr l2 -> SLTOr (x :: l2)
+					| _, _ -> SLTOr [x;y]
+				)
+			) addslomap currslomap)
+		) addResult collResult
+	) analResultList SLIMap.empty
+	in
+	SLIMap.map (SLOMap.map simplifyOrAnds) interm
 ;;
 

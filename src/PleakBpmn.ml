@@ -191,7 +191,7 @@ let grreprPutTaskToSeqFlow grrepr edgeid noderec =
 let grreprIncomingEdgeOfKind grrepr nodeid eopkind =
 	let (_, _, incom) = IdtMap.find nodeid grrepr.nodes
 	in
-	let Some rres = IdtSet.fold (fun edgeid res ->
+	match IdtSet.fold (fun edgeid res ->
 		match res with
 		| Some _ -> res
 		| None ->
@@ -199,14 +199,15 @@ let grreprIncomingEdgeOfKind grrepr nodeid eopkind =
 			in
 			if cedge.kind = eopkind then Some edgeid else None
 	) incom None
-	in
-	rres
+	with
+	| None -> raise Not_found
+	| Some rres -> rres
 ;;
 
 let grreprOutgoingEdgeOfKind grrepr nodeid eopkind =
 	let (_, outg, _) = IdtMap.find nodeid grrepr.nodes
 	in
-	let Some rres = IdtSet.fold (fun edgeid res ->
+	match IdtSet.fold (fun edgeid res ->
 		match res with
 		| Some _ -> res
 		| None ->
@@ -214,8 +215,9 @@ let grreprOutgoingEdgeOfKind grrepr nodeid eopkind =
 			in
 			if cedge.kind = eopkind then Some edgeid else None
 	) outg None
-	in
-	rres
+	with
+	| None -> raise Not_found
+	| Some rres -> rres
 ;;
 
 let isProcessStartNode grrepr nodeid =
@@ -304,14 +306,41 @@ let xmlchilds frag s =
 ;;
 
 let getPCData xmlelem = (* Xml.pcdata (List.hd (Xml.children xmlelem)) *)
-	match xmlelem with
-	| Xml.Element (_, _, children) -> (
-		match children with
-		| [] -> ""
-		| xx :: _ -> Xml.pcdata xx
-	)
-	| Xml.PCData s -> s
+	let prelres =
+		match xmlelem with
+		| Xml.Element (_, _, children) -> (
+			match children with
+			| [] -> ""
+			| xx :: _ -> Xml.pcdata xx
+		)
+		| Xml.PCData s -> s
+	in
+	let buf = Buffer.create ((String.length prelres) - 5)
+	and rembuf = Buffer.create 5
+	in
+	for i = 0 to (String.length prelres) - 1 do
+		let x = Buffer.length rembuf
+		and c = prelres.[i]
+		in
+		if  ((x = 0) && (c = '&')) ||
+			((x = 1) && (c = '#')) ||
+			((x = 2) && (c = '1')) ||
+			((x = 3) && (c = '0')) ||
+			((x = 4) && (c = ';')) then
+		begin
+			if x = 4 then Buffer.clear rembuf else Buffer.add_char rembuf c;
+		end
+		else
+		begin
+			Buffer.add_buffer buf rembuf;
+			Buffer.add_char buf c;
+			Buffer.clear rembuf
+		end
+	done;
+	Buffer.add_buffer buf rembuf;
+	Buffer.contents buf
 ;;
+(* to remove: &#10; *)
 
 let collectFromFile grrepr =
 	let idmappings = ref RLMap.empty
@@ -346,12 +375,18 @@ let collectFromFile grrepr =
 		end
 		else if Xml.tag collchild = "bpmn2:messageFlow" then
 		begin
+			let isSecureChannel =
+				let ll = xmlchilds collchild "pleak:SecureChannel"
+				in
+				(ll <> [])
+			in
+			print_string ("Message flow " ^ (Xml.attrib collchild "id") ^ " uses a secure channel: " ^ (string_of_bool isSecureChannel) ^ "\n" );
 			let edgeonpic = {
 				id = idForStr (Xml.attrib collchild "id");
 				src = idForStr (Xml.attrib collchild "sourceRef");
 				tgt = idForStr (try Xml.attrib collchild "targetRef" with Xml.No_attribute _ -> raise (Failure ("The msgFlow " ^ (Xml.attrib collchild "id") ^ " has no targetref")));
 				kind = EOPMsgFlow;
-				attrs = RLMap.empty;
+				attrs = RLMap.singleton "securechannel" (if isSecureChannel then "true" else "false");
 			}
 			in
 			addResEdge edgeonpic
@@ -478,41 +513,54 @@ let collectFromFile grrepr =
 					attrs = RLMap.add "tasktype" (if tagname = "bpmn2:task" then "plain" else "user") attrwithname;
 				}
 				in
-				let nodeonpic1 = try
-					let xmlsql = xmlchild xmlprocesselem "pleak:sqlScript"
-					in
-					{nodeonpic0 with attrs = RLMap.add "sql" (getPCData xmlsql) nodeonpic0.attrs}
-				with Xml.No_attribute _ -> nodeonpic0
+				let tryToPickAttr xmlname parsename (nodeonpic : nodeonpicturetype) =
+					try
+						let xmlsql = xmlchild xmlprocesselem xmlname
+						in
+						let actualsql = getPCData xmlsql
+						in
+						if actualsql <> "" then
+							{nodeonpic with attrs = RLMap.add parsename actualsql nodeonpic.attrs}
+						else nodeonpic
+					with Xml.No_attribute _ -> nodeonpic
+				in
+				let nodeonpic1 = tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))
 				in
 				addResNode nodeonpic1;
 				addHierEdge nodeonpic1.id;
 				collectDataAssocs xmlprocesselem nodeonpic1.id
 			end
-			else if tagname = "bpmn2:dataObjectReference" then
+			else if (tagname = "bpmn2:dataObjectReference") || (tagname = "bpmn2:dataStoreReference") then
 			begin
-				let attrwithscript =
+				let tryToPickAttr xmlname parsename (nodeonpic : nodeonpicturetype) =
 					try
-						let xmlsql = xmlchild xmlprocesselem "pleak:sqlScript"
+						let xmlsql = xmlchild xmlprocesselem xmlname
 						in
-						RLMap.add "sql" (getPCData xmlsql) attrwithname
-					with Xml.No_attribute _ -> attrwithname
-					in
-				let nodeonpic = {
+						let actualsql = getPCData xmlsql
+						in
+						if actualsql <> "" then
+							{nodeonpic with attrs = RLMap.add parsename actualsql nodeonpic.attrs}
+						else nodeonpic
+					with Xml.No_attribute _ -> nodeonpic
+				in
+				let nodeonpic = tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:sqlScript" "sql" ({
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPDataset;
-					attrs = (* RLMap.add "name" ((RLMap.find "name" attrwithscript) ^ " {" ^  !currentprocessname ^"}") *) attrwithscript;
-				}
+					attrs = (* RLMap.add "name" ((RLMap.find "name" attrwithscript) ^ " {" ^  !currentprocessname ^"}") *) if tagname = "bpmn2:dataStoreReference" then RLMap.add "datastore" "yes" attrwithname else attrwithname;
+				})))
 				in
 				addResNode nodeonpic;
 				addHierEdge nodeonpic.id
 			end
 			else if tagname = "bpmn2:subProcess" then
 			begin
-				let nodeonpic0 = {
+				let nodeonpic0pre = {
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPSubprocess;
 					attrs = attrwithname;
 				}
+				in
+				let nodeonpic0 = if (RLMap.mem "name" nodeonpic0pre.attrs) && ((RLMap.find "name" nodeonpic0pre.attrs) <> "") then nodeonpic0pre else {nodeonpic0pre with attrs = RLMap.add "name" (Xml.attrib xmlprocesselem "id") nodeonpic0pre.attrs}
 				in
 				let nodeonpic1 =
 					try
@@ -614,15 +662,112 @@ let collectFromFile grrepr =
 		(nde', nout, nin)
 	) resnodestmp2
 	in
-	{nodes = resnodestmp3; edges = !resgraphedges;}
+	let grrepr = {nodes = resnodestmp3; edges = !resgraphedges;}
+	in
+	let encupdnodes = IdtMap.map (fun ((nodeonpic1 : nodeonpicturetype),woutg,wincom) ->
+		let nodeonpic2 = if (nodeonpic1.kind = NOPTask) then
+		begin
+			if ((RLMap.mem "skdecrypt" nodeonpic1.attrs) || (RLMap.mem "skencrypt" nodeonpic1.attrs)) then
+			begin
+				let (isEnc, jsondesc) = if RLMap.mem "skencrypt" nodeonpic1.attrs then (true, RLMap.find "skencrypt" nodeonpic1.attrs) else (false, RLMap.find "skdecrypt" nodeonpic1.attrs)
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let keyds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "key" js)
+				and textds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member (if isEnc then "inputData" else "ciphertext") js)
+				in
+				let (keyNode,_,_) = IdtMap.find (idForStr keyds) grrepr.nodes
+				and (textNode,_,_) = IdtMap.find (idForStr textds) grrepr.nodes
+				in
+				let keyname = RLMap.find "name" keyNode.attrs
+				and textname = RLMap.find "name" textNode.attrs
+				in
+				{nodeonpic1 with attrs = RLMap.add "skkey" keyname (RLMap.add "sktext" textname nodeonpic1.attrs)}
+			end
+			else if RLMap.mem "abencrypt" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "abencrypt" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let keyds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "key" js)
+				and textds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "inputData" js)
+				and attrAsList = List.map Yojson.Basic.Util.to_string (Yojson.Basic.Util.to_list (Yojson.Basic.Util.member "attributeSubSet" js))
+				in
+				let (keyNode,_,_) = IdtMap.find (idForStr keyds) grrepr.nodes
+				and (textNode,_,_) = IdtMap.find (idForStr textds) grrepr.nodes
+				in
+				let keyname = RLMap.find "name" keyNode.attrs
+				and textname = RLMap.find "name" textNode.attrs
+				in
+				let nattrs1 = RLMap.add "abAttrNum" (string_of_int (List.length attrAsList)) (RLMap.add "abenckey" keyname (RLMap.add "abplaintext" textname nodeonpic1.attrs))
+				in
+				let nattrs2 = List.fold_right (fun (idx,s) m -> RLMap.add ("Attribute_" ^ (string_of_int idx)) s m) (List.mapi (fun idx s -> (idx,s)) attrAsList) nattrs1
+				in
+				{nodeonpic1 with attrs = nattrs2}
+			end
+			else if RLMap.mem "abdecrypt" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "abdecrypt" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let keyds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "key" js)
+				and textds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "ciphertext" js)
+				in
+				let (keyNode,_,_) = IdtMap.find (idForStr keyds) grrepr.nodes
+				and (textNode,_,_) = IdtMap.find (idForStr textds) grrepr.nodes
+				in
+				let keyname = RLMap.find "name" keyNode.attrs
+				and textname = RLMap.find "name" textNode.attrs
+				in
+				{nodeonpic1 with attrs = RLMap.add "abdeckey" keyname (RLMap.add "abciphertext" textname nodeonpic1.attrs)}
+			end
+			else nodeonpic1
+		end
+		else if (nodeonpic1.kind = NOPDataset) then
+		begin
+			if RLMap.mem "abpublic" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "abpublic" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let groupid = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "groupId" js)
+				in
+				{nodeonpic1 with attrs = RLMap.add "abgroup" groupid nodeonpic1.attrs}
+			end
+			else if RLMap.mem "abprivate" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "abprivate" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let groupid = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "groupId" js)
+				and attrAsList = List.map Yojson.Basic.Util.to_string (Yojson.Basic.Util.to_list (Yojson.Basic.Util.member "attributeSubSet" js))
+				in
+				let nattrs1 = RLMap.add "abAttrNum" (string_of_int (List.length attrAsList)) (RLMap.add "abgroup" groupid nodeonpic1.attrs)
+				in
+				let nattrs2 = List.fold_right (fun (idx,s) m -> RLMap.add ("Attribute_" ^ (string_of_int idx)) s m) (List.mapi (fun idx s -> (idx,s)) attrAsList) nattrs1
+				in
+				{nodeonpic1 with attrs = nattrs2}
+			end
+			else nodeonpic1
+		end else nodeonpic1
+		in
+		(nodeonpic2, woutg, wincom)
+	) grrepr.nodes
+	in
+	({grrepr with nodes = encupdnodes}, idForStr)
 ;;
 
 let commentsToAttrs grrepr =
 	IdtMap.fold (fun nid ((ndesc : nodeonpicturetype), noutg, nincom) ngr ->
 		if ndesc.kind = NOPComment then
 		begin
-			let comconnid = grreprIncomingEdgeOfKind ngr nid EOPComment
+			let comconnid = try grreprIncomingEdgeOfKind ngr nid EOPComment with Not_found -> NewName.invalid_id
 			in
+			if comconnid = NewName.invalid_id then grreprRemoveNode ngr nid else
 			let comconn = IdtMap.find comconnid ngr.edges
 			in
 			let (srcn, srcoutg, srcincom) = IdtMap.find comconn.src ngr.nodes
@@ -632,6 +777,26 @@ let commentsToAttrs grrepr =
 			grreprRemoveNode (grreprAddNode ngr newsrcn) nid
 		end else ngr
 	) grrepr.nodes grrepr
+;;
+
+let noMultipleMsgflows grrepr =
+	let storeOGMF = Hashtbl.create 10
+	in
+	IdtMap.fold (fun eid (edesc : edgeonpicturetype) ngr ->
+		if edesc.kind <> EOPMsgFlow then ngr else
+		if Hashtbl.mem storeOGMF edesc.src then grreprRemoveEdge ngr eid else
+		(Hashtbl.add storeOGMF edesc.src (); ngr)
+	) grrepr.edges grrepr
+;;
+
+let noMultipleWrites grrepr =
+	let storeOGMF = Hashtbl.create 10
+	in
+	IdtMap.fold (fun eid (edesc : edgeonpicturetype) ngr ->
+		if edesc.kind <> EOPWrite then ngr else
+		if Hashtbl.mem storeOGMF (edesc.src,edesc.tgt) then grreprRemoveEdge ngr eid else
+		(Hashtbl.add storeOGMF (edesc.src,edesc.tgt) (); ngr)
+	) grrepr.edges grrepr
 ;;
 
 let defaultsToEdgeAttrs (grrepr : graphgraphtype) =
@@ -911,7 +1076,18 @@ let translateTaskScript scriptstr isGuard =
 	let keywords = ["="; "("; ")"; ","; "!"; "."]
 	and isemptystream ss = try Stream.empty ss; true with Stream.Failure -> false
 	in
-	let tkstream = Genlex.make_lexer keywords (Stream.of_string scriptstr)
+	(* let tkstream = Genlex.make_lexer keywords (Stream.of_string scriptstr) *)
+	let tkstream = 
+		let inpbuf = Lexing.from_string scriptstr
+		in
+		let tokenColl = ref []
+		in
+		(try
+			while true do
+				tokenColl := (PleakBpmnLexer.token inpbuf) :: !tokenColl
+			done;
+		with PleakBpmnLexer.Eof -> () );
+		Stream.of_list (List.rev !tokenColl)
 	in
 	let parserabbrvs = ref RLMap.empty
 	and previouslines = ref []
@@ -924,10 +1100,18 @@ let translateTaskScript scriptstr isGuard =
 		in
 		match fstTok with
 		| Genlex.Ident funordsname -> begin
-			let Genlex.Kwd sndElem = Stream.next tkstream
+			let dummy = Stream.next tkstream
+			in
+			if (match dummy with Genlex.Kwd _ -> false | _ -> true) then raise (Failure "Parse failure: expected a keyword near the start of an expression")
+			else
+			let Genlex.Kwd sndElem = dummy
 			in
 			if sndElem = "." then
-				let Genlex.Ident compname = Stream.next tkstream
+				let dummy = Stream.next tkstream
+				in
+				if (match dummy with Genlex.Ident _ -> false | _ -> true) then raise (Failure "Parse failure: expected a field name after the dot")
+				else
+				let Genlex.Ident compname = dummy
 				in
 				DEVar (readabbrv funordsname, compname)
 			else if sndElem = "(" then
@@ -1023,14 +1207,17 @@ let replicateAfterReplicate grrepr =
 					IdtSet.fold (fun edgeid res -> match res with
 						| Some _ -> res
 						| None ->
+							(try
 							let edge = IdtMap.find edgeid gr0.edges
 							in
 							if edge.kind = EOPSeqFlow then Some edge else None
+							with Not_found -> None )
 					) fstprocoutg None
 				else
 					IdtSet.fold (fun edgeid res -> match res with
 						| Some _ -> res
 						| None ->
+							(try
 							let edge = IdtMap.find edgeid gr0.edges
 							in
 							if edge.kind <> EOPBoundary then None else
@@ -1038,6 +1225,7 @@ let replicateAfterReplicate grrepr =
 							in
 							if (RLMap.find "eventtype" boundedvnode.attrs) <> endingtype then None else
 							Some (IdtMap.find (IdtSet.choose boundedvoutg) gr0.edges)
+							with Not_found -> None)
 					) fstprocoutg None
 			in
 			let (followtaskandevids, stopnow) =
@@ -1067,7 +1255,11 @@ let replicateAfterReplicate grrepr =
 			end
 			in
 			if stopnow then (gr0, handledNodes) else
-			if (IdtSet.inter handledNodes followtaskandevids) <> IdtSet.empty then raise (Failure "The branches following a subprocess will merge somewhere down the line") else
+			if (IdtSet.inter handledNodes followtaskandevids) <> IdtSet.empty then
+				let nodelist = String.concat ", " (List.map NewName.to_string (IdtSet.elements (IdtSet.inter handledNodes followtaskandevids)))
+				in
+				begin raise (Failure ("The branches following a subprocess will merge somewhere down the line. Offending nodes: " ^ nodelist))
+			end else
 			let (followdataids,_) = IdtSet.fold (fun followtaskevid (gooddataids, alldataids) ->
 				let (ften, fteog, fteinc) = IdtMap.find followtaskevid gr0.nodes
 				in
@@ -1109,7 +1301,7 @@ let replicateAfterReplicate grrepr =
 			let newprocn = {
 				id = NewName.get ();
 				kind = NOPSubprocess;
-				attrs = RLMap.singleton "repeat" "parallel";
+				attrs = RLMap.add "name" (endingtype ^ " followup of " ^ (RLMap.find "name" nowprocn.attrs)) (RLMap.singleton "repeat" "parallel");
 			}
 			and newstartnode = {
 				id = NewName.get ();
@@ -1170,6 +1362,11 @@ let replicateAfterReplicate grrepr =
 				kind = NOPTask;
 				attrs = RLMap.singleton "name" "Send";
 			}
+			and dummydatainitializer = {
+				id = NewName.get ();
+				kind = NOPTask;
+				attrs = RLMap.add "sql" ("throw_" ^ (NewName.to_string newstartnode.id) ^ ".v = \"DUMMY\"") (RLMap.singleton "name" ("Intialize throw_" ^ (NewName.to_string newstartnode.id)));
+			}
 			in
 			let datasendcontainedge = {
 				id = NewName.get ();
@@ -1190,10 +1387,19 @@ let replicateAfterReplicate grrepr =
 				src = dummydatasender.id;
 				tgt = newstartnode.id;
 				kind = EOPMsgFlow;
+				attrs = RLMap.singleton "securechannel" "true";
+			}
+			and datainitializingedge = {
+				id = NewName.get ();
+				src = dummydatainitializer.id;
+				tgt = dummydatasend.id;
+				kind = EOPWrite;
 				attrs = RLMap.empty;
 			}
 			in
-			let gr3 = grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddNode (grreprPutTaskToSeqFlow gr2 (grreprIncomingEdgeOfKind gr2 firstprocendnodeid EOPSeqFlow) dummydatasender) dummydatasend) datasendcontainedge) datasendingedge) msgflowedge
+			let gr2a = grreprPutTaskToSeqFlow gr2 (grreprIncomingEdgeOfKind gr2 firstprocendnodeid EOPSeqFlow) dummydatasender
+			in
+			let gr3 = grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddEdge (grreprAddNode (grreprPutTaskToSeqFlow gr2a (grreprIncomingEdgeOfKind gr2a dummydatasender.id EOPSeqFlow) dummydatainitializer) dummydatasend) datasendcontainedge) datasendingedge) msgflowedge) datainitializingedge
 			in
 			let gr4 = if endingtype = "plain" then gr3 else
 				let Some boundaryEventId = IdtSet.fold (fun bedgeid res ->
@@ -1395,7 +1601,7 @@ let replicateFollowsReplicate grrepr =
 		in
 		let gr3 = {gr2 with nodes = IdtMap.add startnode.id (newstartnode, stnoutg, stnincom) gr2.nodes}
 		in
-		let gr4 = grreprRemoveNode (cutSequenceOverNode gr3 endnodeid) endnodeid
+		let gr4 = grreprRemoveNode (grreprRemoveNode (cutSequenceOverNode gr3 endnodeid) endnodeid) procid
 		in
 		(anychange := true; gr4)
 	) grrepr.nodes grrepr
@@ -1890,7 +2096,7 @@ let handle2ndtryConstellation grrepr =
 			src = senderTask.id;
 			tgt = startNode.id;
 			id = NewName.get ();
-			attrs = RLMap.empty;
+			attrs = RLMap.singleton "securechannel" "true";
 		}
 		in
 		let gr6 = grreprAddEdge (grreprAddEdge (grreprPutTaskToSeqFlow gr5 (grreprIncomingEdgeOfKind gr5 fstEndNodeN.id EOPSeqFlow) senderTask) senderTaskConn1) senderTaskConn2
@@ -2082,8 +2288,14 @@ let handle2ndtryConstellation grrepr =
 	) grrepr.nodes grrepr
 ;;
 
-let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t ) = fun grrepr ->
-	let (taskcomps, guards) = IdtMap.fold (fun nodeid ((node : nodeonpicturetype),noutg,nincom) (tccurr,gcurr) ->
+let readABEAttributeSetFromTaskAttrs attrs =
+	let n = int_of_string (RLMap.find "abAttrNum" attrs)
+	in
+	List.fold_right (fun idx s -> RLSet.add (RLMap.find ("Attribute_" ^ (string_of_int idx)) attrs) s) (intfromto 0 (n-1)) RLSet.empty
+;;
+
+let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t * graphgraphtype ) = fun grrepr idForStr ->
+	let (taskcomps, guards, addedIVs) = IdtMap.fold (fun nodeid ((node : nodeonpicturetype),noutg,nincom) (tccurr,gcurr, addivll) ->
 		if RLMap.mem "sql" node.attrs then
 		begin
 			let isGuard =
@@ -2103,8 +2315,52 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 				with _ -> false
 			in
 			match (translateTaskScript (RLMap.find "sql" node.attrs) isGuard) with
-			| Left deflist -> ((IdtMap.add nodeid deflist tccurr), gcurr)
-			| Right gexpr -> (tccurr, (IdtMap.add nodeid gexpr gcurr))
+			| Left deflist -> ((IdtMap.add nodeid deflist tccurr), gcurr, addivll)
+			| Right gexpr -> (tccurr, (IdtMap.add nodeid gexpr gcurr), addivll)
+		end
+		else if (RLMap.mem "skencrypt" node.attrs) || (RLMap.mem "skdecrypt" node.attrs) || (RLMap.mem "abdecrypt" node.attrs) then
+		begin
+			let isEnc = RLMap.mem "skencrypt" node.attrs
+			and isAB = RLMap.mem "abdecrypt" node.attrs
+			in
+			let outDatasetName =
+				let ogedgeid = grreprOutgoingEdgeOfKind grrepr nodeid EOPWrite
+				in
+				let ogedge = IdtMap.find ogedgeid grrepr.edges
+				in
+				let (nextnode,_,_) = IdtMap.find ogedge.tgt grrepr.nodes
+				in
+				RLMap.find "name" nextnode.attrs
+			in
+			let keyname = RLMap.find (if isAB then "abdeckey" else "skkey") node.attrs
+			and textname = RLMap.find (if isAB then "abciphertext" else "sktext") node.attrs
+			in
+			let encargs = (if isEnc then [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv")] else []) @ [DEVar (keyname, "key"); DEVar (textname, "data")]
+			in
+			let deflist = [((outDatasetName, if isAB then "key" else "data"), DEOp ((if isAB then OPABDecrypt else if isEnc then OPEncrypt else OPDecrypt), encargs)); ((outDatasetName, "*\\data"), DEVar (textname,"*\\data"))]
+			in
+			((IdtMap.add nodeid deflist tccurr), gcurr, (if isEnc then nodeid :: addivll else addivll))
+		end
+		else if (RLMap.mem "abencrypt" node.attrs) then
+		begin
+			let outDatasetName =
+				let ogedgeid = grreprOutgoingEdgeOfKind grrepr nodeid EOPWrite
+				in
+				let ogedge = IdtMap.find ogedgeid grrepr.edges
+				in
+				let (nextnode,_,_) = IdtMap.find ogedge.tgt grrepr.nodes
+				in
+				RLMap.find "name" nextnode.attrs
+			in
+			let keyname = RLMap.find "abenckey" node.attrs
+			and textname = RLMap.find "abplaintext" node.attrs
+			and attrset = readABEAttributeSetFromTaskAttrs node.attrs
+			in
+			let encargs = [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv"); DEVar (keyname, "key"); DEVar (textname, "key")]
+			in
+			let deflist = [((outDatasetName, "data"), DEOp ((OPABEncrypt attrset), encargs)) ; ((outDatasetName, "*\\key"), DEVar (textname,"*\\key"))]
+			in
+			((IdtMap.add nodeid deflist tccurr), gcurr, (nodeid :: addivll))
 		end
 		else
 		begin
@@ -2117,7 +2373,7 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					if outedge.kind <> EOPMsgFlow then None else Some outedge
 			) noutg None
 			in
-			if possOutMsgFlow = None then (tccurr, gcurr) else
+			if possOutMsgFlow = None then (tccurr, gcurr, addivll) else
 			let possIncomingDataset = IdtSet.fold (fun incedgeid res ->
 				match res with
 				| Some _ -> res
@@ -2127,7 +2383,7 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					if incedge.kind <> EOPRead then None else Some incedge
 			) nincom None
 			in
-			if possIncomingDataset = None then (tccurr, gcurr) else
+			if possIncomingDataset = None then (tccurr, gcurr, addivll) else
 			let Some outMsgFlow = possOutMsgFlow
 			in
 			let (recvnode, recvoutg, _) = IdtMap.find outMsgFlow.tgt grrepr.nodes
@@ -2141,7 +2397,7 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					if outedge.kind <> EOPWrite then None else Some outedge
 			) recvoutg None
 			in
-			if possStoreDataset = None then (tccurr, gcurr) else
+			if possStoreDataset = None then (tccurr, gcurr, addivll) else
 			let Some incomingDataset = possIncomingDataset
 			and Some storeDataset = possStoreDataset
 			in
@@ -2149,9 +2405,9 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 			and (storeDSnode,_,_) = IdtMap.find storeDataset.tgt grrepr.nodes
 			in
 			let tccurr' = IdtMap.add nodeid [((RLMap.find "name" storeDSnode.attrs, "*"), DEVar (RLMap.find "name" incomingDSnode.attrs, "*"))] tccurr
-			in (tccurr', gcurr)
+			in (tccurr', gcurr, addivll)
 		end
-	) grrepr.nodes (IdtMap.empty, IdtMap.empty)
+	) grrepr.nodes (IdtMap.empty, IdtMap.empty, [])
 	in
 	let rec addExprComps dsds dexpr =
 		match dexpr with
@@ -2167,6 +2423,26 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 	let (dsd0, dsdincl) = IdtMap.fold (fun _ compdefll (dsdcurr, inclcurr) ->
 		List.fold_right (fun ((lhsds, lhscomp), rhsexpr) (dsdcxx, inclcxx) ->
 			if lhscomp = "*" then
+			begin
+				let DEVar (rhsds,_) = rhsexpr
+				in
+				let incset = try RLMap.find rhsds inclcxx with Not_found -> RLSet.empty
+				in
+				let inclcxx' = RLMap.add rhsds (RLSet.add lhsds incset) inclcxx
+				in
+				(dsdcxx, inclcxx')
+			end else
+			if lhscomp = "*\\data" then
+			begin
+				let DEVar (rhsds,_) = rhsexpr
+				in
+				let incset = try RLMap.find rhsds inclcxx with Not_found -> RLSet.empty
+				in
+				let inclcxx' = RLMap.add rhsds (RLSet.add lhsds incset) inclcxx
+				in
+				(dsdcxx, inclcxx')
+			end else
+			if lhscomp = "*\\key" then
 			begin
 				let DEVar (rhsds,_) = rhsexpr
 				in
@@ -2226,12 +2502,65 @@ let (readDataDeclarations : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					((lhsds, compname), DEVar (rhsds, compname)) :: ll'
 				) rhsdesc currll
 			end
+			else if lhscomp = "*\\data" then
+			begin
+				let DEVar (rhsds,_) = rhside
+				in
+				let rhsdesc = snd (RLMap.find rhsds !dsdr)
+				in
+				RLMap.fold (fun compname _ ll' ->
+					if compname = "data" then ll' else
+					((lhsds, compname), DEVar (rhsds, compname)) :: ll'
+				) rhsdesc currll
+			end
+			else if lhscomp = "*\\key" then
+			begin
+				let DEVar (rhsds,_) = rhside
+				in
+				let rhsdesc = snd (RLMap.find rhsds !dsdr)
+				in
+				RLMap.fold (fun compname _ ll' ->
+					if compname = "key" then ll' else
+					((lhsds, compname), DEVar (rhsds, compname)) :: ll'
+				) rhsdesc currll
+			end
 			else cdef :: currll
 		) cdefl []
 		in IdtMap.add taskid updcdefl updtccurr
 	) taskcomps IdtMap.empty
 	in
-	(!dsdr, updtaskcomps, guards)
+	let grrepr' = List.fold_right (fun encnodeid grcurr ->
+		let (encnode,_,_) = IdtMap.find encnodeid grcurr.nodes
+		in
+		let containedgeid = grreprIncomingEdgeOfKind grcurr encnodeid EOPContain
+		in
+		let containedge = IdtMap.find containedgeid grcurr.edges
+		in
+		let newdataset = {
+			kind = NOPDataset;
+			id = NewName.get ();
+			attrs = RLMap.singleton "name" ("IV_for_" ^ (NewName.to_string encnodeid))
+		}
+		in
+		let newContainEdge = {
+			kind = EOPContain;
+			id = NewName.get ();
+			src = containedge.src;
+			tgt = newdataset.id;
+			attrs = RLMap.empty;
+		}
+		and newReadEdge = {
+			kind = EOPRead;
+			id = NewName.get ();
+			src = newdataset.id;
+			tgt = encnodeid;
+			attrs = RLMap.empty;
+		}
+		in
+		grreprAddEdge (grreprAddEdge (grreprAddNode grcurr newdataset) newContainEdge) newReadEdge
+	) addedIVs grrepr
+	in
+	(!dsdr, updtaskcomps, guards, grrepr')
 ;;
 
 let foldGraphNodesByControlFlow (f : NewName.idtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> 'a IdtMap.t list -> 'a ) grrepr =
@@ -2285,7 +2614,7 @@ let foldGraphNodesByControlFlow (f : NewName.idtype -> nodeonpicturetype * IdtSe
 	!curracc
 ;;
 
-let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName.idtype option list list IdtMap.t) * (graphgraphtype -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t) )) =
+let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName.idtype option list list IdtMap.t) * (graphgraphtype -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t) )) =
 	let rec pathToContainingProc grrepr nodeid =
 		let (node, noutg, nincom) = IdtMap.find nodeid grrepr.nodes
 		in
@@ -2370,7 +2699,7 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 		in
 		let rightMerger k x y = leftMerger k y x
 		in
-		let (foldingFunction : NewName.idtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> ((NewName.idtype option list list IdtMap.t) * ((NewName.idtype * bool) option)) IdtMap.t list -> (NewName.idtype option list list IdtMap.t) * ((NewName.idtype * bool) option) ) = fun nodeid (node, noutg, nincom) availProcPtrList ->
+		let (foldingFunction : NewName.idtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> ((NewName.idtype option list list IdtMap.t) * ((IdtSet.t * bool) option)) IdtMap.t list -> (NewName.idtype option list list IdtMap.t) * ((IdtSet.t * bool) option) ) = fun nodeid (node, noutg, nincom) availProcPtrList ->
 			let flowInsCalculator procs = IdtMap.fold (fun _ availAtInc allAvail ->
 				IdtMap.merge leftMerger availAtInc allAvail
 			) procs IdtMap.empty
@@ -2382,7 +2711,7 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 				in
 				let newpptr = NewName.get ()
 				in
-				((IdtMap.add newpptr ppl flowIns), Some (newpptr, true))
+				((IdtMap.add newpptr ppl flowIns), Some (IdtSet.singleton newpptr, true))
 			else if (node.kind = NOPEvent) && ((RLMap.find "eventkind" node.attrs) = "catch") && ((RLMap.find "eventtype" node.attrs) = "message") then
 			begin
 				let procPtrsOnHier = List.map (fun x -> flowInsCalculator (IdtMap.map fst x)) availProcPtrList
@@ -2414,7 +2743,8 @@ let ((findMsgFlowProcPaths, introduceProcPointers) : ((graphgraphtype -> NewName
 					) sendnodepaths
 				) availPtrs
 				in
-				let (goodProcPtr,_) = IdtMap.choose goodPtrs
+				let goodProcPtr = IdtMap.fold (fun ptr _ s -> IdtSet.add ptr s) goodPtrs IdtSet.empty
+				(* let (goodProcPtr,_) = IdtMap.choose goodPtrs *)
 				in
 				(flowIns, Some (goodProcPtr, false))
 			end
@@ -2445,6 +2775,25 @@ let (manyTimesUpdatedDatasets : graphgraphtype -> IdtSet.t * IdtSet.t * IdtSet.t
 		in
 		((if writecount > 1 then IdtSet.add nodeid ssmany else ssmany), (if writecount = 0 then IdtSet.add nodeid ss0 else ss0), (if readcount = 0 then IdtSet.add nodeid sspublish else sspublish))
 	) grrepr.nodes (IdtSet.empty, IdtSet.empty, IdtSet.empty)
+;;
+
+let (insecurelySentDatasets : graphgraphtype -> IdtSet.t) = fun grrepr ->
+	IdtMap.fold (fun nodeid ((node : nodeonpicturetype),noutg,nincom) res ->
+		if node.kind <> NOPTask then res else
+		let incdatasetids = IdtSet.fold (fun dedgeid ss ->
+			let dedge = IdtMap.find dedgeid grrepr.edges
+			in
+			if dedge.kind <> EOPRead then ss else IdtSet.add dedge.src ss
+		) nincom IdtSet.empty
+		in
+		if IdtSet.exists (fun edgeid ->
+			let cedge = IdtMap.find edgeid grrepr.edges
+			in
+			if cedge.kind <> EOPMsgFlow then false
+			else
+			((RLMap.find "securechannel" cedge.attrs) = "false")
+		) noutg then IdtSet.union incdatasetids res else res
+	) grrepr.nodes IdtSet.empty
 ;;
 
 module type GiveType = sig
@@ -2496,7 +2845,7 @@ module GT_SprNetworkNode = struct type t = sprNetworkNode end;;
 module EASP = ExtArray(GT_StoppingProc);;
 module EASNN = ExtArray(GT_SprNetworkNode);;
 
-let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (stoppingproc * NewName.idtype * NewName.idtype, anyproc) either) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
+let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (stoppingproc * NewName.idtype * NewName.idtype, anyproc) either) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
 	let isOpeningGateway (node, noutg, nincom) =
 		let c = IdtSet.fold (fun edgeid cnt ->
 			let edge = IdtMap.find edgeid grrepr.edges
@@ -2555,7 +2904,7 @@ let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t
 		in
 		let encprocname = RLMap.find "name" encproc.attrs
 		in
-		let starttask = SPRTask (StartEvent ((try Some (IdtMap.find startNodeId procpointers) with Not_found -> None), encprocname))
+		let starttask = SPRTask (StartEvent ((try Some (IdtSet.choose (IdtMap.find startNodeId procpointers)) with Not_found -> None), encprocname))
 		in
 		let startAndRecv = if (RLMap.find "eventtype" startnode.attrs) = "message" then
 			SPRSeq (starttask, (collectReceivings grrepr (startnode, startnOutg, startnIncom) procpointers dsdecls updDatasets))
@@ -2576,12 +2925,12 @@ let rec (makeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t
 		| Right None -> Right (PRNetwork (nwprocs, nwnodes, []))
 		| Left xs -> Right (PRNetwork (nwprocs, nwnodes, xs))
 		| Right (Some (nid, eid)) -> Left (SPRNetwork (nwprocs, nwnodes), nid, eid)
-and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> NewName.idtype IdtMap.t -> datasetdeclaration RLMap.t -> IdtSet.t -> stoppingproc) = fun grrepr (startNode, startnOutg, startnIncom) procpointers dsdecls updDatasets ->
+and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet.t -> IdtSet.t IdtMap.t -> datasetdeclaration RLMap.t -> IdtSet.t -> stoppingproc) = fun grrepr (startNode, startnOutg, startnIncom) procpointers dsdecls updDatasets ->
 	let receivings = IdtSet.fold (fun incedgeid ll ->
 		let incedge = IdtMap.find incedgeid grrepr.edges
 		in
 		if incedge.kind <> EOPMsgFlow then ll else
-		let sendPrPtr = if isProcessStartNode grrepr startNode.id then IdtMap.find incedge.src procpointers else NewName.invalid_id
+		let sendPrPtr = if isProcessStartNode grrepr startNode.id then IdtSet.choose (IdtMap.find incedge.src procpointers) else NewName.invalid_id
 		in
 		let (sendNode, _, sendNIncom) = IdtMap.find incedge.src grrepr.nodes
 		in
@@ -2600,6 +2949,12 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		(incedge, sendPrPtr, dataNode) :: ll
 	) startnIncom []
 	in
+	print_string "Collecting receivings for node no. ";
+	print_endline (NewName.to_string startNode.id);
+	List.iter (fun (incedge, sendprptr, (datanode : nodeonpicturetype)) ->
+		print_string ("Over edge " ^ (NewName.to_string incedge.id) ^ " comes datanode no. " ^ (NewName.to_string datanode.id) ^ " from process no. " ^ (NewName.to_string sendprptr) ^ "\n")
+	) receivings;
+	
 	let Some storePlace = IdtSet.fold (fun dataEdgeId res ->
 		match res with
 			| Some _ -> res
@@ -2623,8 +2978,13 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		in
 		IdtMap.find procStartEventId procpointers
 *)	in
+	let rec createsrccheck srcprptr = function
+		| [] -> DEOp (OPBoolConst false, [])
+		| [myOwnProcPtr] -> DEPtrSrcCheck (myOwnProcPtr, Right srcprptr)
+		| myOwnProcPtr :: ll -> DEOp (OPOr, [DEPtrSrcCheck (myOwnProcPtr, Right srcprptr); createsrccheck srcprptr ll])
+	in
 	let checksAndCopies = List.map (fun (msgflowedge, srcprptr, (srcdatanode : nodeonpicturetype)) ->
-		let gtask = GuardTask ("check the source of the message", (if srcprptr = NewName.invalid_id then DEOp (OPBoolConst true, []) else DEPtrSrcCheck (myOwnProcPtr, Right srcprptr)), [])
+		let gtask = GuardTask ("check the source of the message", (if srcprptr = NewName.invalid_id then DEOp (OPBoolConst true, []) else createsrccheck srcprptr (IdtSet.elements myOwnProcPtr)), [])
 		in
 		let srcdsname = RLMap.find "name" srcdatanode.attrs
 		in
@@ -2632,7 +2992,7 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 			((storePlaceName, compname), DEVar (srcdsname, compname)) :: ll
 		) (snd (RLMap.find srcdsname dsdecls)) []
 		in
-		let taskDefCont = (copyScript, [(Some myOwnProcPtr, srcdsname)], [storePlaceName])
+		let taskDefCont = (copyScript, [(myOwnProcPtr, srcdsname)], [storePlaceName])
 		in
 		let copytaskname = "Copy the dataset " ^ srcdsname
 		in
@@ -2647,11 +3007,11 @@ and (collectReceivings : graphgraphtype -> nodeonpicturetype * IdtSet.t * IdtSet
 		| (gtask, wholeCopyTask) :: ll -> SPRBranch (gtask ,SPRTask wholeCopyTask, (turnToCopy ll))
 	in
 	turnToCopy checksAndCopies
-and (iterMakeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> anyproc) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
+and (iterMakeProcStartingFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> anyproc) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId ->
 	match makeProcStartingFromNode grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId with
 		| Left (stproc, nextnodeid, _) -> PRSeq (stproc, iterMakeProcStartingFromNode grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets nextnodeid)
 		| Right aproc -> aproc
-and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> NewName.idtype IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (* stoppingproc array * sprNetworkNode array -> (int, int) either IdtMap.t -> *) stoppingproc array * sprNetworkNode array * ((int * anyproc) list, (NewName.idtype * NewName.idtype) option) either ) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId (* (existingNWNodes, existingNWPoints) nodesToNWMap *) ->
+and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * componentdefinition list IdtMap.t * definingexpr IdtMap.t -> NewName.idtype option list list IdtMap.t -> IdtSet.t IdtMap.t -> IdtSet.t -> RLSet.t -> NewName.idtype -> (* stoppingproc array * sprNetworkNode array -> (int, int) either IdtMap.t -> *) stoppingproc array * sprNetworkNode array * ((int * anyproc) list, (NewName.idtype * NewName.idtype) option) either ) = fun grrepr (dsdecls, taskprogs, guards) msgFlowPaths procpointers updDatasets publishDatasets startNodeId (* (existingNWNodes, existingNWPoints) nodesToNWMap *) ->
 	let rec collectLhsOfCompDefs = function
 		| [] -> RLSet.empty
 		| ((dsname,_),_) :: cdefs -> RLSet.add dsname (collectLhsOfCompDefs cdefs)
@@ -2735,6 +3095,9 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 				in
 				outgoingProcs := (contAfterIdx, wholeTail) :: !outgoingProcs
 			in
+(*			let workNodeHasCode = IdtMap.mem workNodeId taskprogs (* Alternatively: worknode.attrs has element "sql" or "skencrypt" or "skdecrypt" *)  *)
+			let workNodeHasCode = (RLMap.mem "sql" workNode.attrs) || (RLMap.mem "skencrypt" workNode.attrs) || (RLMap.mem "skdecrypt" workNode.attrs) || (RLMap.mem "abencrypt" workNode.attrs) || (RLMap.mem "abdecrypt" workNode.attrs)
+			in
 			if workNode.kind = NOPTask then
 			begin
 				(if IdtMap.mem workNodeId guards then
@@ -2752,7 +3115,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					in
 					let gdef = IdtMap.find workNodeId guards
 					in
-					let srcdss = RLSet.fold (fun dsname ll -> (None, dsname) :: ll) (collectRhsOfCompDef gdef) []
+					let srcdss = RLSet.fold (fun dsname ll -> (IdtSet.empty, dsname) :: ll) (collectRhsOfCompDef gdef) []
 					in
 					let guardToGatewayEdgeId = grreprOutgoingEdgeOfKind grrepr workNodeId EOPSeqFlow
 					in
@@ -2765,7 +3128,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					handledNodes := IdtSet.add gwnode.id !handledNodes;
 					chwnoutg := gwoutg
 				end
-				else if (IdtMap.mem workNodeId taskprogs) && (RLMap.mem "sql" workNode.attrs) then
+				else if (IdtMap.mem workNodeId taskprogs) && workNodeHasCode then
 				begin
 					let compdefs = IdtMap.find workNodeId taskprogs
 					in
@@ -2773,7 +3136,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					and rhsdss = collectRhsOfManyCompDef compdefs
 					in
 					let noderhscomp = RLSet.fold (fun dsname ll ->
-						(None, dsname) :: ll
+						(IdtSet.empty, dsname) :: ll
 					) rhsdss []
 					and (nodelhscomp, pubcomp) = RLSet.fold (fun dsname (ll, pp) ->
 						let ll' = dsname :: ll
@@ -2802,7 +3165,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 					(cEvent.kind = NOPEvent) && ((RLMap.find "eventkind" cEvent.attrs) = "start")
 				) wnoutg then
 				begin
-					let prptr = IdtMap.find workNodeId procpointers
+					let prptr = IdtSet.choose (IdtMap.find workNodeId procpointers)
 					and myTaskName = RLMap.find "name" workNode.attrs
 					and procAddr = List.map (function | None -> None | Some prnodeid -> 
 						let (prnode, _, _) = IdtMap.find prnodeid grrepr.nodes
@@ -3042,6 +3405,65 @@ let printgrgr grrepr fn =
 	close_out oc
 ;;
 
+let makeABBEKeygenProc grrepr =
+	let abbedata = IdtMap.fold (fun _ ((node : nodeonpicturetype),_,_) gridToPar ->
+		if RLMap.mem "abpublic" node.attrs then
+		begin
+			let grid = RLMap.find "abgroup" node.attrs
+			and nname = RLMap.find "name" node.attrs
+			in
+			let (mpknames, skdescs) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty)
+			in
+			RLMap.add grid ((RLSet.add nname mpknames), skdescs) gridToPar
+		end
+		else if RLMap.mem "abprivate" node.attrs then
+		begin
+			let grid = RLMap.find "abgroup" node.attrs
+			and nname = RLMap.find "name" node.attrs
+			and keyattrs = readABEAttributeSetFromTaskAttrs node.attrs
+			in
+			let (mpknames, skdescs) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty)
+			in
+			RLMap.add grid (mpknames, (RLMap.add nname keyattrs skdescs)) gridToPar
+		end
+		else gridToPar
+	) grrepr.nodes RLMap.empty
+	in
+	RLMap.fold (fun groupname (mpknames, skdescs) (currproc, currdsdecls, currNoUpds, currForgetUpds) ->
+		let mskGenTask = NormalTask (("Generate master secret key for ABBE group " ^ groupname),
+			([(("Master_secret_key_for_" ^ groupname, "msk"), DEOp (OPABGenMSK, [DEVar ("Master_randomness_for_" ^ groupname, "rnd")]))],
+			[(IdtSet.empty, "Master_randomness_for_" ^ groupname)],
+			["Master_secret_key_for_" ^ groupname])
+		)
+		in
+		let mpkGenTasks = RLSet.fold (fun mpkname ll ->
+			(mpkname, (NormalTask (("Generate master public key for ABBE group " ^ groupname),
+			([((mpkname, "key"), DEOp (OPABExtractMPK, [DEVar ("Master_secret_key_for_" ^ groupname, "msk")]))],
+			[(IdtSet.empty, "Master_secret_key_for_" ^ groupname)],
+			[mpkname])
+			))) :: ll
+		) mpknames []
+		in
+		let allGenTasks = RLMap.fold (fun skname keyattrs ll ->
+			(skname, NormalTask (("Generate secret key for ABBE group " ^ groupname ^ " with attributes " ^ (String.concat ", " (RLSet.elements keyattrs))),
+			([((skname, "key"), DEOp (OPABExtractSK keyattrs, [DEVar ("Master_secret_key_for_" ^ groupname, "msk")]))],
+			[(IdtSet.empty, "Master_secret_key_for_" ^ groupname)],
+			[skname])
+			)) :: ll
+		) skdescs mpkGenTasks
+		in
+		let mrnddecl = ("Master_randomness_for_" ^ groupname, RLMap.singleton "rnd" VAny)
+		and mskdecl = ("Master_secret_key_for_" ^ groupname, RLMap.singleton "msk" VAny)
+		in
+		let newproc = SPRSeq ((SPRTask mskGenTask), (List.fold_right (fun (_,atask) pr -> SPRSeq ((SPRTask atask), pr)) allGenTasks currproc))
+		and newdsdecls = mrnddecl :: mskdecl :: currdsdecls
+		and newNoUpds = RLSet.add ("Master_randomness_for_" ^ groupname) currNoUpds
+		and newForgetUpds = List.fold_right (fun (kname,_) s -> RLSet.add kname s) allGenTasks currForgetUpds
+		in
+		(newproc, newdsdecls, newNoUpds, newForgetUpds)
+	) abbedata (SPRNil, [], RLSet.empty, RLSet.empty)
+;;
+
 let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = fun fname ->
 	let z nm f garg =
 		let res = f garg
@@ -3053,9 +3475,11 @@ let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = f
 	in
 	let xmlrepr = Xml.parse_file fname
 	in
-	let grrepr0 = (z "4" joinSameNameDatasets) ((z "3" defaultsToEdgeAttrs) ((z "2" commentsToAttrs) ((z "1" collectFromFile) xmlrepr)))
+	let (grrepr0pre, idForStr) = collectFromFile xmlrepr
 	in
-	let grrepr1 = (z "12" copyBeforeSend) ((z "11" foldParallelParallelGW) ((z "10" replicateAfterReplicate) ((z "9" conditionalTwoMsgReceive) ((z "8" dissolveNonreplSubproc) ((z "7" handle2ndtryConstellation) ((z "6" oneEndOfEachType) ((z "5" moveMsgFlowToStartNode) grrepr0)))))))
+	let grrepr0 = (z "4" joinSameNameDatasets) ((z "3" defaultsToEdgeAttrs) ((z "2b" noMultipleWrites)  ((z "2a" noMultipleMsgflows) ((z "2" commentsToAttrs) ((z "1" (fun x -> x)) grrepr0pre)))))
+	in
+	let grrepr1 = (z "12" copyBeforeSend) ((z "11" foldParallelParallelGW) ((z "10" replicateAfterReplicate) ((z "9" conditionalTwoMsgReceive) ((z "8" dissolveNonreplSubproc) ((z "7" handle2ndtryConstellation) ( (* (z "6" oneEndOfEachType) *) ((z "5" moveMsgFlowToStartNode) grrepr0)))))))
 	in
 	let grrepr = 
 		let keepgoing = ref true
@@ -3072,18 +3496,32 @@ let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = f
 		done;
 		!currgr
 	in
-	let (dsdecls, taskprogs, guards) = readDataDeclarations grrepr
+	let (dsdecls, taskprogs, guards, grrepr) = readDataDeclarations grrepr idForStr
 	in
+	printgrgr grrepr "PR_1.dot";
 	let msgflowpaths = findMsgFlowProcPaths grrepr
 	in
+	print_endline "Found the following message flow paths";
+	IdtMap.fold (fun nodeid ll () ->
+		print_endline ("Node no. " ^ (NewName.to_string nodeid));
+		List.iter (fun lll ->
+			print_endline ("Possible path: [" ^ (String.concat "; " (List.map (function None -> "UP" | Some d -> NewName.to_string d) lll)) ^ "]")
+		) ll
+	) msgflowpaths ();
 	let procpointers = introduceProcPointers grrepr msgflowpaths
 	and (severalUpdates, noUpdates, noReadsPre) = manyTimesUpdatedDatasets grrepr
+	and insecCommsPre = insecurelySentDatasets grrepr
 	in
+	print_endline "Found the following proc. pointers";
+	IdtMap.fold (fun nodeid pps () ->
+		print_string ("Node no: " ^ (NewName.to_string nodeid));
+		print_endline (", possible pointers: {" ^ (String.concat "; " (List.map NewName.to_string (IdtSet.elements pps))) ^ "}")
+	) procpointers ();
 	let noReads = IdtSet.fold (fun nodeid ss ->
 		let (node,_,_) = IdtMap.find nodeid grrepr.nodes
 		in
 		RLSet.add (RLMap.find "name" node.attrs) ss
-	) noReadsPre RLSet.empty
+	) (IdtSet.union noReadsPre insecCommsPre) RLSet.empty
 	in
 	let topProcessIds = findTopProcessNodes grrepr
 	in
@@ -3097,7 +3535,9 @@ let (convertXMLBPMN : string -> anyproc * datasetdeclaration list * RLSet.t) = f
 		RLSet.add (RLMap.find "name" node.attrs) ss
 	) noUpdates RLSet.empty
 	in
-	((PRParal inInterm), RLMap.fold (fun _ v l -> v :: l) dsdecls [], noUpdNames)
+	let (abbekeygenproc, extradsdecls, extranoupds, forgetNoUpds) = makeABBEKeygenProc grrepr
+	in
+	(PRSeq (abbekeygenproc, (PRParal inInterm)), RLMap.fold (fun _ v l -> v :: l) dsdecls extradsdecls, RLSet.diff (RLSet.union extranoupds noUpdNames) forgetNoUpds)
 ;;
 
 (* Steps for converting:

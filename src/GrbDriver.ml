@@ -25,7 +25,7 @@ let rec printoutxml colltags indent thing =
 ;;
 
 let () =
-	let (resultfolder, possBpmnFile) = GrbAnalyzer.readParameters ()
+	let (resultfolder, possBpmnFile, jumpToEnd) = GrbAnalyzer.readParameters ()
 	in
 	match possBpmnFile with
 		| None ->
@@ -33,6 +33,7 @@ let () =
 			in
 			GrbAnalyzer.analysis dg true resultfolder
 		| Some bpmnFile ->
+			if jumpToEnd then GrbAnalyzer.simplifyAnalResults resultfolder bpmnFile else
 			let (wholeproc, useddatasets, inpdatasets) = PleakBpmn.convertXMLBPMN bpmnFile
 			in
 			let dg = BpmnInput.convertBPMN wholeproc useddatasets inpdatasets
