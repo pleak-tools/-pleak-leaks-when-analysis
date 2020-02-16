@@ -61,22 +61,22 @@ in function
 
 
 (* the output is a triple (sel = [col,alias],from,where,groupby) *)
-let rec toQexpr oc schema = function
+let rec toQexpr ot oc schema = function
     | RATable tblname -> let (colMap,_)   = (if RLMap.mem tblname schema then RLMap.find tblname schema else error (tblname ^ " not found in the schema")) in
                          let colNames     = List.map fst (RLMap.bindings colMap) in
                          (List.map (fun x -> (x,x)) colNames, [(tblname,tblname)], [], [], [])
-    | RAFilter (subexp, filterexp) -> let (sel, fr, wh, gr, ord) = toQexpr oc schema subexp in
+    | RAFilter (subexp, filterexp) -> let (sel, fr, wh, gr, ord) = toQexpr ot oc schema subexp in
                                       let fstr = toAexpr filterexp in
                                       (sel, fr, List.append wh [fstr], gr, ord)
-    | RAProject (subexp, keptcols) -> let (sel0, fr, wh, gr, ord) = toQexpr oc schema subexp in
+    | RAProject (subexp, keptcols) -> let (sel0, fr, wh, gr, ord) = toQexpr ot oc schema subexp in
                                       let sel = List.filter (fun (_,x) -> List.mem x keptcols) sel0 in
                                       (sel, fr, wh, gr, ord)
-    | RANewColumn (subexp, colname, colexp) -> let (sel, fr, wh, gr, ord) = toQexpr oc schema subexp in
+    | RANewColumn (subexp, colname, colexp) -> let (sel, fr, wh, gr, ord) = toQexpr ot oc schema subexp in
                                                let colvalue = toAexpr colexp in
                                                (List.append sel [(colvalue, colname)], fr, wh, gr, ord)
 
     (* assumption: we only rename pure columns of subexpr and do not go deeper *)
-    | RARenameCol (oldcolname, newcolname, subexp) ->  let (sel0, fr0, wh, gr, ord) = toQexpr oc schema subexp in
+    | RARenameCol (oldcolname, newcolname, subexp) ->  let (sel0, fr0, wh, gr, ord) = toQexpr ot oc schema subexp in
                                                        let sel = List.map (fun (x,y) -> if String.equal y oldcolname then
                                                                                             if String.contains oldcolname '.' then (y,newcolname)
                                                                                             else (x,newcolname)
@@ -87,7 +87,7 @@ let rec toQexpr oc schema = function
                                                        (sel, fr, wh, gr, ord)
 
     (* assumption: we can only aggregate by pure columns and not expressions *)
-    | RAAggregate (subexp, groupattrs, aggroattrs) -> let (sel, fr, wh, gr0, ord) = toQexpr oc schema subexp in
+    | RAAggregate (subexp, groupattrs, aggroattrs) -> let (sel, fr, wh, gr0, ord) = toQexpr ot oc schema subexp in
                                                       let aggrColNames = List.map fst aggroattrs in
                                                       let sel0     = List.filter (fun (_,x) -> not (List.mem x aggrColNames)) sel in
                                                       let aggrVals = List.map fst (List.filter (fun (_,x) -> List.mem x aggrColNames) sel) in
@@ -95,21 +95,21 @@ let rec toQexpr oc schema = function
                                                       let gr = groupattrs in
                                                       (List.append sel0 sel1, fr, wh, List.append gr0 gr, ord)
 
-    | RALetExp (newtblname, newtblexp, restexp) -> let (sel0, fr0, wh0, gr0, ord0) = toQexpr oc schema newtblexp in
+    | RALetExp (newtblname, newtblexp, restexp) -> let (sel0, fr0, wh0, gr0, ord0) = toQexpr ot oc schema newtblexp in
 
-                                                   (* TODO this is fine as far as we do not need types in the schemas *)
+                                                   (* this is fine as far as we do not need types in the schemas *)
                                                    let newColMap = List.fold_right (fun (_,x) m -> RLMap.add x NoValue m) sel0 RLMap.empty in
                                                    let newKeys   = [] in
                                                    let newSchema = RLMap.add newtblname (newColMap, newKeys) schema in
 
-                                                   (* TODO we want to write down the newtblname table somewhere *)
                                                    output_string oc (queryString newtblname (sel0, fr0, wh0, gr0, ord0) ^ "\n\n");
-                                                   let (sel1, fr1, wh1, gr1, ord1) = toQexpr oc newSchema restexp in
+                                                   if (not (String.equal "" ot)) && (String.equal newtblname ot) then ([],[],[],[],[]) else
+                                                   let (sel1, fr1, wh1, gr1, ord1) = toQexpr ot oc newSchema restexp in
                                                    (sel1, fr1, wh1, gr1, ord1)
 
-    | RACartesian subexps -> List.fold_right (fun s (sel0,fr0,wh0,gr0,ord0) -> let (sel,fr,wh,gr,ord) = toQexpr oc schema s in (List.append sel sel0 , List.append fr fr0 , List.append wh wh0, List.append gr gr0, List.append ord ord0)) subexps ([],[],[],[],[])
+    | RACartesian subexps -> List.fold_right (fun s (sel0,fr0,wh0,gr0,ord0) -> let (sel,fr,wh,gr,ord) = toQexpr ot oc schema s in (List.append sel sel0 , List.append fr fr0 , List.append wh wh0, List.append gr gr0, List.append ord ord0)) subexps ([],[],[],[],[])
 
-    | RAAddSortColumn (subexp, newcolname, contractcols, sortcol) -> let (sel0, fr0, wh0, gr0, ord0) = toQexpr oc schema subexp in
+    | RAAddSortColumn (subexp, newcolname, contractcols, sortcol) -> let (sel0, fr0, wh0, gr0, ord0) = toQexpr ot oc schema subexp in
                                                                  let sel = List.filter (fun (_,x) -> not (List.mem x contractcols)) sel0 in
                                                                  (List.append sel [("row_number()", newcolname)], fr0, wh0, gr0, List.append ord0 [sortcol])
 
@@ -123,8 +123,9 @@ let () =
         let argc = Array.length Sys.argv in
 	let schema = RAInput.aiddistrDbdesc in
         let query = RAInput.aiddistrQuery in
-        let oc = if argc < 2 then failure ("Usage: " ^ Sys.executable_name ^ " folder_for_result_file\n") else open_out Sys.argv.(1) in
-        ignore (toQexpr oc schema query);
+        let oc = if argc < 2 then failure ("Usage: " ^ Sys.executable_name ^ " folder_for_result_file [target_object]\n") else open_out Sys.argv.(1) in
+        let ot = if argc < 3 then "" else Sys.argv.(2) in
+        ignore (toQexpr ot oc schema query);
         close_out oc;
 ;
 
