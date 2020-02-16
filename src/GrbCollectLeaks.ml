@@ -22,6 +22,7 @@ let rec describeDependency dg n =
 		| NNInputExists _
 		| NNInput _ -> [n.nkind.nodelabel n.ixtypemap, "always"]
 		| NNOperation OPGeoDist
+		| NNOperation OPPow
 		| NNOperation OPDiv
 		| NNNot
 		| NNAnd
@@ -198,6 +199,10 @@ and describeCondition dg n =
 			let desc = collectInputDescs ()
 			in
 			"The geographic distance between the point with latitude {" ^ (PortMap.find (PortOperInput 1) desc) ^ "} and longitude {" ^ (PortMap.find (PortOperInput 2) desc) ^ "}, and the point with latitude {" ^ (PortMap.find (PortOperInput 3) desc) ^ "} and longitude {" ^ (PortMap.find (PortOperInput 4) desc) ^ "}"
+		| NNOperation OPPow ->
+			let desc = collectInputDescs ()
+			in
+			"The value {" ^ (PortMap.find (PortOperInput 1) desc) ^ "} raised to the power {" ^ (PortMap.find (PortOperInput 2) desc) ^ "}"
 		| NNOperation OPDiv ->
 			let desc = collectInputDescs ()
 			in
@@ -1512,6 +1517,7 @@ let output_ewr_to_graph oc ewr =
 					| OPAnd -> "AND", false
 					| OPOr -> "OR", false
 					| OPNot -> "NOT", false
+					| OPPow -> "^", false
 					| OPDiv -> "&#247;", true
 					| OPIntConst c -> (string_of_int c), false
 					| OPStringConst s -> s, false
