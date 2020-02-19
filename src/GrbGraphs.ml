@@ -451,7 +451,7 @@ let inclvalue x y = match x,y with  (* strict inclusion *)
 
 let ns_inclvalue x y = (x=y) || (inclvalue x y);;
 
-type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPTimePointConst of (int,int) either | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool;;
+type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPPow | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPTimePointConst of (int,int) either | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool;;
 
 let string_of_opname = function
 | OPPlus -> "+"
@@ -466,6 +466,7 @@ let string_of_opname = function
 | OPOr -> "||"
 | OPNot -> "!"
 | OPDiv -> "/"
+| OPPow -> "^"
 | OPGeoDist -> "distance"
 | OPCoalesce -> "coalesce"
 | OPCeiling -> "ceiling"

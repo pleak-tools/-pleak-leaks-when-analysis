@@ -825,6 +825,7 @@ and (computeAnyExp : DG.t -> tablelocationtype -> raanyexp -> DG.t * attrlocatio
 	let newkind,nports = match opname with
 		| OPPlus
 		| OPDiv
+		| OPPow
 		| OPMult
 		| OPGeoDist
 		| OPCeiling
