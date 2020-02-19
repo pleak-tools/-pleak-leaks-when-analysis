@@ -113,10 +113,11 @@ let rec toQexpr ot oc schema = function
                                                                  let sel = List.filter (fun (_,x) -> not (List.mem x contractcols)) sel0 in
                                                                  (List.append sel [("row_number()", newcolname)], fr0, wh0, gr0, List.append ord0 [sortcol])
 
-    | RAUnionWithDifferentSchema (_, _) -> error "Union of tables is not supported yet."
+    | RAUnionWithDifferentSchema (_, _) -> ([],[],[],[],[])
+    | RAUnion (_, _)                    -> ([],[],[],[],[])
+
     | RAIntersection (_, _)             -> error "Intersection of tables is not supported yet."
     | RADifference (_, _)               -> error "Difference of tables is not supported yet."
-    | RAUnion (_, _)                    -> error "Union of tables is not supported yet."
     | RANonmatchingJoin (_, _, _)       -> error "Non-matching JOIN of tables (LEFT, RIGHT) is not supported yet."
 
 let () =
