@@ -573,13 +573,24 @@ let putTogetherSameNodes dg n1 n2 =
 	match perhapsMap with
 		| None -> None
 		| Some dimsMap -> 
+		(
+			print_endline ("The node " ^ (NewName.to_string n2.id) ^ " will be merged with the node " ^ (NewName.to_string n1.id));
+			Array.iteri (fun idx v -> print_string ((string_of_int idx) ^ "->" ^ (string_of_int v) ^ "; ")) dimsMap;
+			print_newline ();
+			let invDimsMap =
+				let res = Array.make (Array.length dimsMap) (-1)
+				in
+				Array.iteri (fun idx v -> res.(v) <- idx) dimsMap;
+				res
+			in
 			Some (DG.nodefoldoutedges dg (fun ((IxM cc,eid),tgtn,prt) dgcurr ->
 				let Some (_,_,backmap) = cc.(0)
 				in
-				let newbackmap = Array.map (fun idx -> backmap.(idx)) dimsMap
+				let newbackmap = Array.map (fun idx -> backmap.(idx)) invDimsMap
 				in
 				DG.addedge ((IxM [|Some (n1.id, 0, newbackmap) |], eid), tgtn.id, prt) dgcurr
 			) n2 (DG.remnode n2.id dg))
+		)
 ;;
 
 let putTogetherNodes dg =

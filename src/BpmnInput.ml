@@ -952,7 +952,8 @@ let findBPPrPtrs ptrcollection usedefs defuses dg0 =
 			let (dgnn, dnaloc) = GrbInput.addNodesToGraph dgn (AITT [| bixtcomp0 |]) pmoclocations nkAndDT (fun _ -> PortUnstrB false)
 			in
 			print_string ("The back pointer is ptr no. " ^ (NewName.to_string (IdtMap.find dptr defuses)) ^ "\n");
-			(dgnn, IdtMap.add dptr [{checknodeid = andloc; kcechnodeid = dnaloc; procpath = spath; numdatadims = dindepnum + trunklen; numjointdims = trunklen; backptr = IdtMap.find dptr defuses;}] foundptrs)
+			(dgnn, IdtMap.add dptr [{checknodeid = andloc; kcechnodeid = dnaloc; procpath = spath; numdatadims = sindepnum + trunklen; numjointdims = trunklen; backptr = IdtMap.find dptr defuses;}] foundptrs)
+			(* Used to have "numdatadims = dindepnum + trunklen". Have to see whether the change to "sindepnum" broke something *)
 		end
 	) ptrcollection (dg0, IdtMap.empty)
 ;;
@@ -968,7 +969,7 @@ let (collectRemoteDataset : IdtSet.t -> datasetname -> graphpreparationtype -> D
 	else
 	begin
 		print_endline ("Collecting remote dataset " ^ dsname ^ " through process pointer(s) " ^ (String.concat ", " (List.map NewName.to_string (IdtSet.elements prptr))));
-		print_string ("Current ixtype: ");
+		print_string ("Current ixtype (cix4p.(0)): ");
 		let AITT cix4p = prep.currixt
 		in
 		Array.iter (fun (vt, mbs) -> let s = match mbs with None -> "NONE" | Some ss -> ss in print_string (s ^ "[" ^ (string_of_valuetype vt) ^ "]; ")) cix4p.(0);
@@ -990,7 +991,7 @@ let (collectRemoteDataset : IdtSet.t -> datasetname -> graphpreparationtype -> D
 			in
 			let (AITT anb) = andnode.outputindextype
 			in
-			print_string "Ixtype of the collectible data: ";
+			print_string ("AND node " ^ (NewName.to_string andnode.id) ^ ", Ixtype of the collectible data (anb.(0)): ");
 			Array.iter (fun (vt, mbs) -> let s = match mbs with None -> "NONE" | Some ss -> ss in print_string (s ^ "[" ^ (string_of_valuetype vt) ^ "]; ")) anb.(0);
 			print_newline ();
 			let dsexecnode = DG.findnode dsexec.l !currdg
@@ -998,6 +999,10 @@ let (collectRemoteDataset : IdtSet.t -> datasetname -> graphpreparationtype -> D
 			in
 			let (AITT dseb) = dsexecnode.outputindextype
 			in
+			print_endline ("The dsexecnode is node no. " ^ (NewName.to_string dsexec.l));
+			print_string ("Ixtype of the dataset inside the iteration (dseb.(0)): ");
+			Array.iter (fun (vt, mbs) -> let s = match mbs with None -> "NONE" | Some ss -> ss in print_string (s ^ "[" ^ (string_of_valuetype vt) ^ "]; ")) dseb.(0);
+			print_newline ();
 			let projmap_backmap = Array.init oneptrdesc.numdatadims (fun x -> x)
 			in
 			let projmap = IxM [| Some ((), 0, projmap_backmap) |]
@@ -1008,6 +1013,9 @@ let (collectRemoteDataset : IdtSet.t -> datasetname -> graphpreparationtype -> D
 			and mergeitm = IxM [| Some ((), 0, Array.init numMergedDims (fun x -> if x < oneptrdesc.numjointdims then x else x + oneptrdesc.numdatadims - oneptrdesc.numjointdims)) |]
 			and finalprojmap = IxM [| Some ((), 0, Array.init numMergedDims (fun x -> x)) |]
 			in
+			print_string "Ixtype of the merge result (mergeoit): ";
+			Array.iter (fun (vt, mbs) -> let s = match mbs with None -> "NONE" | Some ss -> ss in print_string (s ^ "[" ^ (string_of_valuetype vt) ^ "]; ")) mergeoit;
+			print_newline ();
 			let goodPtr1 = Array.fold_left (&&) true (Array.mapi (fun idx ixtmem -> ixtmem = anb.(0).(idx)) dseb.(0))
 			and goodPtr2 = ((Array.length mergeoit) <= (Array.length cix4p.(0))) && (Array.fold_left (&&) true (Array.mapi (fun idx ixtmem -> ixtmem = cix4p.(0).(idx)) mergeoit))
 			in

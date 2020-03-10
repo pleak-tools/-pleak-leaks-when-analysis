@@ -1,6 +1,10 @@
 open GrbGraphs;;
 open GrbCommons;;
 
+let safestringsub s st l =
+	if (String.length s) < st + l then "" else String.sub s st l
+;;
+
 let rec (oneOfEach : 'a list list -> 'a list list) = function
 	| [] -> [[]]
 	| l :: ls ->
@@ -1394,7 +1398,7 @@ let output_ewr_to_graph oc ewr =
 	) RAInput.access_granted RLMap.empty
 	in
 	let isAttrPrivate tblname attrname =
-		if ((String.length tblname) >= 7) && ((String.uppercase (String.sub tblname 0 7)) = "UNKNOWN") then false else
+		if ((String.length tblname) >= 7) && ((String.uppercase (safestringsub tblname 0 7)) = "UNKNOWN") then false else
 		let s = try RLMap.find tblname accGr with Not_found -> RLSet.empty
 		in
 		not (RLSet.mem attrname s)
@@ -2253,7 +2257,7 @@ let pathFromToFilter dg inpNodes describeFilter =
 	let doNotPassFlow n prt =
 		let d = n.nkind.nodelabel
 		in
-		if ((String.length d) >= 3) && ((String.sub d 0 3) = "is_") then true else
+		if ((String.length d) >= 3) && ((safestringsub d 0 3) = "is_") then true else
 		match prt with
 		| PortOperInput opinpnum -> (
 			let ll = match n.nkind.nodeintlbl with
@@ -2304,7 +2308,7 @@ let answersToSLI dg answers =
 		in
 		let inpName = inpNode.nkind.nodelabel
 		in
-		desc := SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) SLOMap.empty !desc
+		desc := SLIMap.add (SLINormal (safestringsub inpName 6 ((String.length inpName) - 6))) SLOMap.empty !desc
 	) answers;
 	let transpAnswers = IdtMap.fold (fun inpNodeId inpAnswers res ->
 		RLMap.fold (fun outpName ioresults res' ->
@@ -2318,11 +2322,11 @@ let answersToSLI dg answers =
 	in
 	RLMap.iter (fun outpName resInps ->
 		let outpElem =
-			if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
-			else if (String.sub outpName 0 6) = "Key of" then
+			if (safestringsub outpName 0 7) = "Copy_of" then SLOTraffic
+			else if (safestringsub outpName 0 6) = "Key of" then
 				let preflen = String.length "Key of encryption "
 				in
-				SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+				SLOSymEncKey (NewName.from_string (safestringsub outpName preflen ((String.length outpName) - preflen)))
 			else SLONormal outpName
 		in
 		IdtMap.iter (fun inpNodeId (withAll, withNone, allResults) ->
@@ -2330,7 +2334,7 @@ let answersToSLI dg answers =
 			in
 			let inpName = inpNode.nkind.nodelabel
 			in
-			let inpElem = SLINormal (String.sub inpName 6 ((String.length inpName) - 6))
+			let inpElem = SLINormal (safestringsub inpName 6 ((String.length inpName) - 6))
 			in
 			let currFormula = try SLOMap.find outpElem (SLIMap.find inpElem !desc) with Not_found -> SLTOr []
 			in
@@ -2526,7 +2530,7 @@ let processChecks dg =
 	let (checkNodes, checkNodeNames) = DG.foldnodes (fun n (ss, rs) ->
 		let d = n.nkind.nodelabel
 		in
-		if (n.nkind.outputtype = VBoolean) && ((String.length d) >= 3) && ((String.sub d 0 3) = "is_") then ((IdtMap.add n.id d ss), (RLMap.add d (IdtSet.add n.id (try RLMap.find d rs with Not_found -> IdtSet.empty)) rs)) else (ss,rs)
+		if (n.nkind.outputtype = VBoolean) && ((String.length d) >= 3) && ((safestringsub d 0 3) = "is_") then ((IdtMap.add n.id d ss), (RLMap.add d (IdtSet.add n.id (try RLMap.find d rs with Not_found -> IdtSet.empty)) rs)) else (ss,rs)
 	) dg (IdtMap.empty, RLMap.empty)
 	in
 	let namesAsList = RLMap.fold (fun k _ ll -> k :: ll ) checkNodeNames []
@@ -2560,7 +2564,7 @@ let checkFlows dg =
 			| NNInput _ ->
 				let inpName = n.nkind.nodelabel
 				in
-				if ((String.length inpName) >= 9) && ((String.sub inpName 0 9) = "Input IV_") then ss else IdtSet.add n.id ss
+				if ((String.length inpName) >= 9) && ((safestringsub inpName 0 9) = "Input IV_") then ss else IdtSet.add n.id ss
 			| _ -> ss
 	) dg IdtSet.empty
 	and allOutputNodes = DG.foldnodes (fun n ss ->
@@ -2574,8 +2578,8 @@ let checkFlows dg =
 		if (match n.nkind.nodeintlbl with NNOperation (OPABEncrypt _ ) -> true | _ -> false) then Some (SLTSymEncFail n.id) else
 		let d = n.nkind.nodelabel
 		in
-		if ((String.length d) >= 7) && ((String.sub d 0 7) = "filter_") then Some (SLTFilter d) else 
-		if ((String.length d) >= 4) && ((String.sub d 0 4) = "hash") then Some (SLTFilter d) else None
+		if ((String.length d) >= 7) && ((safestringsub d 0 7) = "filter_") then Some (SLTFilter d) else 
+		if ((String.length d) >= 4) && ((safestringsub d 0 4) = "hash") then Some (SLTFilter d) else None
 	in
 	let (allChecks, checkResults) = processChecks dg
 	in
@@ -2600,11 +2604,11 @@ let checkFlows dg =
 				in
 				let sltmnew = RLSet.fold (fun outpName sltmcurr ->
 					let sloElem =
-						if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
-						else if (String.sub outpName 0 6) = "Key of" then
+						if (safestringsub outpName 0 7) = "Copy_of" then SLOTraffic
+						else if (safestringsub outpName 0 6) = "Key of" then
 							let preflen = String.length "Key of encryption "
 							in
-							SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+							SLOSymEncKey (NewName.from_string (safestringsub outpName preflen ((String.length outpName) - preflen)))
 							else SLONormal outpName
 					in
 					let sloV = try SLOMap.find sloElem sltmcurr with Not_found -> SLTOr []
@@ -2626,7 +2630,7 @@ let checkFlows dg =
 			in
 			let inpName = inpNode.nkind.nodelabel
 			in
-			SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) slomap slim
+			SLIMap.add (SLINormal (safestringsub inpName 6 ((String.length inpName) - 6))) slomap slim
 		) flowsForInpNodes SLIMap.empty
 		in
 		(additionalSLTs, flowsForSlis)
@@ -2661,11 +2665,11 @@ let checkFlows dg =
 				in
 				let sltmnew = RLSet.fold (fun outpName sltmcurr ->
 					let sloElem =
-						if (String.sub outpName 0 7) = "Copy_of" then SLOTraffic
-						else if (String.sub outpName 0 6) = "Key of" then
+						if (safestringsub outpName 0 7) = "Copy_of" then SLOTraffic
+						else if (safestringsub outpName 0 6) = "Key of" then
 							let preflen = String.length "Key of encryption "
 							in
-							SLOSymEncKey (NewName.from_string (String.sub outpName preflen ((String.length outpName) - preflen)))
+							SLOSymEncKey (NewName.from_string (safestringsub outpName preflen ((String.length outpName) - preflen)))
 							else SLONormal outpName
 					in
 					let sloV = try SLOMap.find sloElem sltmcurr with Not_found -> SLTOr []
@@ -2697,7 +2701,7 @@ let checkFlows dg =
 		in
 		let inpName = inpNode.nkind.nodelabel
 		in
-		SLIMap.add (SLINormal (String.sub inpName 6 ((String.length inpName) - 6))) slomap slim
+		SLIMap.add (SLINormal (safestringsub inpName 6 ((String.length inpName) - 6))) slomap slim
 	) flowsForInpNodes SLIMap.empty
 	in
 	flowsForSlis
