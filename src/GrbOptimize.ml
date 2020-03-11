@@ -1298,7 +1298,7 @@ There are also rules for equality comparisons between two association lists. As 
 
 let rec optimize dg n =
 	match n.nkind.nodeintlbl with
-	| NNGeneric (opName, _) when (opName = "find") || (opName = "contains") || (opName == "endsWith") ->
+	| NNGeneric (opName, _) when (opName = "find") || (opName = "contains") || (opName = "endsWith") ->
 	begin
 		if opName = "find" then optimizeFind dg n else if opName = "contains" then optimizeContains dg n else optimizeEndswith dg n
 	end
