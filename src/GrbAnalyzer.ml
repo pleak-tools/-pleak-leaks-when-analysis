@@ -406,7 +406,7 @@ let analysis dg isSQL resultfolder =
 	GrbPrint.printgraph oc dg;
 	close_out oc;
 	(*debugGraph dg;*)
-			(let sccarr = GrbOptimize.SCCFinder.scc_array dg
+(*			(let sccarr = GrbOptimize.SCCFinder.scc_array dg
 			in
 			print_string "Found strongly connected components\n";
 			Array.iter (fun nodelist ->
@@ -416,7 +416,7 @@ let analysis dg isSQL resultfolder =
 					print_string (String.concat ", " (List.map NewName.to_string nodelist));
 					print_newline ()
 				end
-			) sccarr);
+			) sccarr); *)
 			(* exit 10; *)
 	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity dg))

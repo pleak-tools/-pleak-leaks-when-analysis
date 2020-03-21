@@ -524,7 +524,7 @@ let collectFromFile grrepr =
 						else nodeonpic
 					with Xml.No_attribute _ -> nodeonpic
 				in
-				let nodeonpic1 = tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))
+				let nodeonpic1 = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKprivate" "pkprivate" (tryToPickAttr "pleak:PKDecrypt" "pkdecrypt" (tryToPickAttr "pleak:PKEncrypt" "pkencrypt" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))))))
 				in
 				addResNode nodeonpic1;
 				addHierEdge nodeonpic1.id;
@@ -543,11 +543,11 @@ let collectFromFile grrepr =
 						else nodeonpic
 					with Xml.No_attribute _ -> nodeonpic
 				in
-				let nodeonpic = tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:sqlScript" "sql" ({
+				let nodeonpic = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKprivate" "pkprivate" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:sqlScript" "sql" ({
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPDataset;
 					attrs = (* RLMap.add "name" ((RLMap.find "name" attrwithscript) ^ " {" ^  !currentprocessname ^"}") *) if tagname = "bpmn2:dataStoreReference" then RLMap.add "datastore" "yes" attrwithname else attrwithname;
-				})))
+				})))))
 				in
 				addResNode nodeonpic;
 				addHierEdge nodeonpic.id
@@ -706,6 +706,25 @@ let collectFromFile grrepr =
 				in
 				{nodeonpic1 with attrs = nattrs2}
 			end
+			else if RLMap.mem "pkencrypt" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "pkencrypt" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let keyds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "key" js)
+				and textds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "inputData" js)
+				in
+				let (keyNode,_,_) = IdtMap.find (idForStr keyds) grrepr.nodes
+				and (textNode,_,_) = IdtMap.find (idForStr textds) grrepr.nodes
+				in
+				let keyname = RLMap.find "name" keyNode.attrs
+				and textname = RLMap.find "name" textNode.attrs
+				in
+				let nattrs1 = RLMap.add "pkenckey" keyname (RLMap.add "pkplaintext" textname nodeonpic1.attrs)
+				in
+				{nodeonpic1 with attrs = nattrs1}
+			end
 			else if RLMap.mem "abdecrypt" nodeonpic1.attrs then
 			begin
 				let jsondesc = RLMap.find "abdecrypt" nodeonpic1.attrs
@@ -723,6 +742,23 @@ let collectFromFile grrepr =
 				in
 				{nodeonpic1 with attrs = RLMap.add "abdeckey" keyname (RLMap.add "abciphertext" textname nodeonpic1.attrs)}
 			end
+			else if RLMap.mem "pkdecrypt" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "pkdecrypt" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let keyds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "key" js)
+				and textds = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "ciphertext" js)
+				in
+				let (keyNode,_,_) = IdtMap.find (idForStr keyds) grrepr.nodes
+				and (textNode,_,_) = IdtMap.find (idForStr textds) grrepr.nodes
+				in
+				let keyname = RLMap.find "name" keyNode.attrs
+				and textname = RLMap.find "name" textNode.attrs
+				in
+				{nodeonpic1 with attrs = RLMap.add "pkdeckey" keyname (RLMap.add "pkciphertext" textname nodeonpic1.attrs)}
+			end
 			else nodeonpic1
 		end
 		else if (nodeonpic1.kind = NOPDataset) then
@@ -736,6 +772,16 @@ let collectFromFile grrepr =
 				let groupid = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "groupId" js)
 				in
 				{nodeonpic1 with attrs = RLMap.add "abgroup" groupid nodeonpic1.attrs}
+			end
+			else if RLMap.mem "pkpublic" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "pkpublic" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let groupid = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "groupId" js)
+				in
+				{nodeonpic1 with attrs = RLMap.add "pkgroup" groupid nodeonpic1.attrs}
 			end
 			else if RLMap.mem "abprivate" nodeonpic1.attrs then
 			begin
@@ -751,6 +797,18 @@ let collectFromFile grrepr =
 				let nattrs2 = List.fold_right (fun (idx,s) m -> RLMap.add ("Attribute_" ^ (string_of_int idx)) s m) (List.mapi (fun idx s -> (idx,s)) attrAsList) nattrs1
 				in
 				{nodeonpic1 with attrs = nattrs2}
+			end
+			else if RLMap.mem "pkprivate" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "pkprivate" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let groupid = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "groupId" js)
+				in
+				let nattrs1 = RLMap.add "pkgroup" groupid nodeonpic1.attrs
+				in
+				{nodeonpic1 with attrs = nattrs1}
 			end
 			else nodeonpic1
 		end else nodeonpic1
@@ -2318,10 +2376,11 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 			| Left deflist -> ((IdtMap.add nodeid deflist tccurr), gcurr, addivll)
 			| Right gexpr -> (tccurr, (IdtMap.add nodeid gexpr gcurr), addivll)
 		end
-		else if (RLMap.mem "skencrypt" node.attrs) || (RLMap.mem "skdecrypt" node.attrs) || (RLMap.mem "abdecrypt" node.attrs) then
+		else if (RLMap.mem "skencrypt" node.attrs) || (RLMap.mem "skdecrypt" node.attrs) || (RLMap.mem "abdecrypt" node.attrs) || (RLMap.mem "pkdecrypt" node.attrs) then
 		begin
 			let isEnc = RLMap.mem "skencrypt" node.attrs
 			and isAB = RLMap.mem "abdecrypt" node.attrs
+			and ispkdec = RLMap.mem "pkdecrypt" node.attrs
 			in
 			let outDatasetName =
 				let ogedgeid = grreprOutgoingEdgeOfKind grrepr nodeid EOPWrite
@@ -2332,12 +2391,12 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 				in
 				RLMap.find "name" nextnode.attrs
 			in
-			let keyname = RLMap.find (if isAB then "abdeckey" else "skkey") node.attrs
-			and textname = RLMap.find (if isAB then "abciphertext" else "sktext") node.attrs
+			let keyname = RLMap.find (if isAB then "abdeckey" else if ispkdec then "pkdeckey" else "skkey") node.attrs
+			and textname = RLMap.find (if isAB then "abciphertext" else if ispkdec then "pkciphertext" else "sktext") node.attrs
 			in
 			let encargs = (if isEnc then [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv")] else []) @ [DEVar (keyname, "key"); DEVar (textname, "data")]
 			in
-			let deflist = [((outDatasetName, if isAB then "key" else "data"), DEOp ((if isAB then OPABDecrypt else if isEnc then OPEncrypt else OPDecrypt), encargs)); ((outDatasetName, "*\\data"), DEVar (textname,"*\\data"))]
+			let deflist = [((outDatasetName, if isAB then "key" else "data"), DEOp ((if isAB then OPABDecrypt else if ispkdec then OPPKDecrypt else if isEnc then OPEncrypt else OPDecrypt), encargs)); ((outDatasetName, "*\\data"), DEVar (textname,"*\\data"))]
 			in
 			((IdtMap.add nodeid deflist tccurr), gcurr, (if isEnc then nodeid :: addivll else addivll))
 		end
@@ -2359,6 +2418,26 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 			let encargs = [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv"); DEVar (keyname, "key"); DEVar (textname, "key")]
 			in
 			let deflist = [((outDatasetName, "data"), DEOp ((OPABEncrypt attrset), encargs)) ; ((outDatasetName, "*\\key"), DEVar (textname,"*\\key"))]
+			in
+			((IdtMap.add nodeid deflist tccurr), gcurr, (nodeid :: addivll))
+		end
+		else if (RLMap.mem "pkencrypt" node.attrs) then
+		begin
+			let outDatasetName =
+				let ogedgeid = grreprOutgoingEdgeOfKind grrepr nodeid EOPWrite
+				in
+				let ogedge = IdtMap.find ogedgeid grrepr.edges
+				in
+				let (nextnode,_,_) = IdtMap.find ogedge.tgt grrepr.nodes
+				in
+				RLMap.find "name" nextnode.attrs
+			in
+			let keyname = RLMap.find "pkenckey" node.attrs
+			and textname = RLMap.find "pkplaintext" node.attrs
+			in
+			let encargs = [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv"); DEVar (keyname, "key"); DEVar (textname, "key")]
+			in
+			let deflist = [((outDatasetName, "data"), DEOp (OPPKEncrypt, encargs)) ; ((outDatasetName, "*\\key"), DEVar (textname,"*\\key"))]
 			in
 			((IdtMap.add nodeid deflist tccurr), gcurr, (nodeid :: addivll))
 		end
@@ -3039,6 +3118,8 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 	and collectedNWnodes = EASNN.create ()
 	and outgoingProcs = ref []
 	and pastFinalNode = ref None
+	and loopDetection = ref None
+	and rightHandAnswer = ref None
 	in
 	EASP.appendV collectedNWedges SPRNil;
 	Queue.add (startNodeId, NewName.invalid_id) workq;
@@ -3055,6 +3136,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 			(incedge.kind <> EOPSeqFlow) || (IdtMap.mem incedgeid !handledEdges)
 		) wnincom) then
 		begin
+			loopDetection := None;
 			let possMyLoc = ref None
 			in
 			let placeTheTask wholeTask =
@@ -3096,7 +3178,7 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 				outgoingProcs := (contAfterIdx, wholeTail) :: !outgoingProcs
 			in
 (*			let workNodeHasCode = IdtMap.mem workNodeId taskprogs (* Alternatively: worknode.attrs has element "sql" or "skencrypt" or "skdecrypt" *)  *)
-			let workNodeHasCode = (RLMap.mem "sql" workNode.attrs) || (RLMap.mem "skencrypt" workNode.attrs) || (RLMap.mem "skdecrypt" workNode.attrs) || (RLMap.mem "abencrypt" workNode.attrs) || (RLMap.mem "abdecrypt" workNode.attrs)
+			let workNodeHasCode = (RLMap.mem "sql" workNode.attrs) || (RLMap.mem "skencrypt" workNode.attrs) || (RLMap.mem "skdecrypt" workNode.attrs) || (RLMap.mem "abencrypt" workNode.attrs) || (RLMap.mem "abdecrypt" workNode.attrs) || (RLMap.mem "pkencrypt" workNode.attrs) || (RLMap.mem "pkdecrypt" workNode.attrs)
 			in
 			if workNode.kind = NOPTask then
 			begin
@@ -3302,10 +3384,32 @@ and (addToNetworkFromNode : graphgraphtype -> datasetdeclaration RLMap.t * compo
 		end
 		else
 		begin
-			Queue.add (workNodeId, comeFromEdgeId) workq
+			if !loopDetection = None then
+			begin
+				loopDetection := Some (workNodeId, comeFromEdgeId);
+				Queue.add (workNodeId, comeFromEdgeId) workq
+			end
+			else
+			begin
+				Queue.add (workNodeId, comeFromEdgeId) workq;
+				if Some (workNodeId, comeFromEdgeId) = !loopDetection then
+				begin
+					if (Queue.length workq) > 1 then raise (Failure "Network has several potential endings")
+					else
+					if not ((workNode.kind = NOPGateway) && ((RLMap.find "gatewaykind" workNode.attrs) = "parallel")) then
+						raise (Failure "the ending node of the Network is not a parallel gateway")
+					else
+					begin
+						rightHandAnswer := Some (workNodeId, comeFromEdgeId);
+						Queue.clear workq
+					end
+				end
+			end
 		end
 	done;
-	(EASP.getArray collectedNWedges, EASNN.getArray collectedNWnodes, Left !outgoingProcs)
+	match !rightHandAnswer with
+	|	None -> (EASP.getArray collectedNWedges, EASNN.getArray collectedNWnodes, Left !outgoingProcs)
+	|	Some (nid, eid) -> if !outgoingProcs = [] then (EASP.getArray collectedNWedges, EASNN.getArray collectedNWnodes, Right (Some (nid, eid))) else (raise (Failure "Network ends with both tails and a final node"))
 ;;
 
 let printgrgr grrepr fn =
@@ -3412,9 +3516,9 @@ let makeABBEKeygenProc grrepr =
 			let grid = RLMap.find "abgroup" node.attrs
 			and nname = RLMap.find "name" node.attrs
 			in
-			let (mpknames, skdescs) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty)
+			let (mpknames, skdescs, pkpknames, pksknames) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty, RLSet.empty, RLSet.empty)
 			in
-			RLMap.add grid ((RLSet.add nname mpknames), skdescs) gridToPar
+			RLMap.add grid ((RLSet.add nname mpknames), skdescs, pkpknames, pksknames) gridToPar
 		end
 		else if RLMap.mem "abprivate" node.attrs then
 		begin
@@ -3422,16 +3526,34 @@ let makeABBEKeygenProc grrepr =
 			and nname = RLMap.find "name" node.attrs
 			and keyattrs = readABEAttributeSetFromTaskAttrs node.attrs
 			in
-			let (mpknames, skdescs) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty)
+			let (mpknames, skdescs,pkpknames, pksknames) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty, RLSet.empty, RLSet.empty)
 			in
-			RLMap.add grid (mpknames, (RLMap.add nname keyattrs skdescs)) gridToPar
+			RLMap.add grid (mpknames, (RLMap.add nname keyattrs skdescs), pkpknames, pksknames) gridToPar
+		end
+		else if RLMap.mem "pkpublic" node.attrs then
+		begin
+			let grid = RLMap.find "pkgroup" node.attrs
+			and nname = RLMap.find "name" node.attrs
+			in
+			let (mpknames, skdescs, pkpknames, pksknames) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty, RLSet.empty, RLSet.empty)
+			in
+			RLMap.add grid (mpknames, skdescs, (RLSet.add nname pkpknames), pksknames) gridToPar
+		end
+		else if RLMap.mem "pkprivate" node.attrs then
+		begin
+			let grid = RLMap.find "pkgroup" node.attrs
+			and nname = RLMap.find "name" node.attrs
+			in
+			let (mpknames, skdescs, pkpknames, pksknames) = try RLMap.find grid gridToPar with Not_found -> (RLSet.empty, RLMap.empty, RLSet.empty, RLSet.empty)
+			in
+			RLMap.add grid (mpknames, skdescs, pkpknames, (RLSet.add nname pksknames)) gridToPar
 		end
 		else gridToPar
 	) grrepr.nodes RLMap.empty
 	in
-	RLMap.fold (fun groupname (mpknames, skdescs) (currproc, currdsdecls, currNoUpds, currForgetUpds) ->
-		let mskGenTask = NormalTask (("Generate master secret key for ABBE group " ^ groupname),
-			([(("Master_secret_key_for_" ^ groupname, "msk"), DEOp (OPABGenMSK, [DEVar ("Master_randomness_for_" ^ groupname, "rnd")]))],
+	RLMap.fold (fun groupname (mpknames, skdescs, pkpknames, pksknames) (currproc, currdsdecls, currNoUpds, currForgetUpds) ->
+		let mskGenTask = NormalTask (("Generate master secret key for ABBE / PK group " ^ groupname),
+			([(("Master_secret_key_for_" ^ groupname, "msk"), DEOp ((if RLSet.is_empty mpknames then OPPKGenSK else OPABGenMSK), [DEVar ("Master_randomness_for_" ^ groupname, "rnd")]))],
 			[(IdtSet.empty, "Master_randomness_for_" ^ groupname)],
 			["Master_secret_key_for_" ^ groupname])
 		)
@@ -3452,10 +3574,26 @@ let makeABBEKeygenProc grrepr =
 			)) :: ll
 		) skdescs mpkGenTasks
 		in
+		let pkpkGenTasks = RLSet.fold (fun pkname ll ->
+			(pkname, (NormalTask (("Extract public key for PK group " ^ groupname),
+			([((pkname, "key"), DEOp (OPPKExtractPK, [DEVar ("Master_secret_key_for_" ^ groupname, "msk")]))],
+			[(IdtSet.empty, "Master_secret_key_for_" ^ groupname)],
+			[pkname])
+			))) :: ll
+		) pkpknames allGenTasks
+		in
+		let pkskGenTasks = RLSet.fold (fun skname ll ->
+			(skname, (NormalTask (("Copy private key for PK group " ^ groupname),
+			([((skname, "key"), DEVar ("Master_secret_key_for_" ^ groupname, "msk"))],
+			[(IdtSet.empty, "Master_secret_key_for_" ^ groupname)],
+			[skname])
+			))) :: ll
+		) pkpknames pkpkGenTasks
+		in
 		let mrnddecl = ("Master_randomness_for_" ^ groupname, RLMap.singleton "rnd" VAny)
 		and mskdecl = ("Master_secret_key_for_" ^ groupname, RLMap.singleton "msk" VAny)
 		in
-		let newproc = SPRSeq ((SPRTask mskGenTask), (List.fold_right (fun (_,atask) pr -> SPRSeq ((SPRTask atask), pr)) allGenTasks currproc))
+		let newproc = SPRSeq ((SPRTask mskGenTask), (List.fold_right (fun (_,atask) pr -> SPRSeq ((SPRTask atask), pr)) pkskGenTasks currproc))
 		and newdsdecls = mrnddecl :: mskdecl :: currdsdecls
 		and newNoUpds = RLSet.add ("Master_randomness_for_" ^ groupname) currNoUpds
 		and newForgetUpds = List.fold_right (fun (kname,_) s -> RLSet.add kname s) allGenTasks currForgetUpds

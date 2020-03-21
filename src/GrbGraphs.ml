@@ -451,7 +451,7 @@ let inclvalue x y = match x,y with  (* strict inclusion *)
 
 let ns_inclvalue x y = (x=y) || (inclvalue x y);;
 
-type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPTimePointConst of (int,int) either | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool | OPEncrypt | OPDecrypt | OPABEncrypt of RLSet.t | OPABDecrypt | OPABGenMSK | OPABExtractMPK | OPABExtractSK of RLSet.t;;
+type operationname = OPPlus | OPNeg | OPMult | OPIsEq | OPLessThan | OPLessEqual | OPGreaterThan | OPGreaterEqual | OPAnd | OPOr | OPNot | OPDiv | OPIntConst of int | OPStringConst of string | OPRealConst of float | OPBoolConst of bool | OPTimePointConst of (int,int) either | OPNull of valuetype | OPGeoDist | OPCeiling | OPCoalesce | OPITE | OPTuple of string list | OPProject of string | OPOrder of bool | OPEncrypt | OPDecrypt | OPPKEncrypt | OPPKDecrypt | OPPKGenSK | OPPKExtractPK | OPABEncrypt of RLSet.t | OPABDecrypt | OPABGenMSK | OPABExtractMPK | OPABExtractSK of RLSet.t;;
 
 let string_of_opname = function
 | OPPlus -> "+"
@@ -481,6 +481,10 @@ let string_of_opname = function
 | OPTimePointConst vx -> (match vx with Left x -> (string_of_int x) ^ "L" | Right x -> (string_of_int x) ^ "R")
 | OPEncrypt -> "encrypt"
 | OPDecrypt -> "decrypt"
+| OPPKEncrypt -> "PKE"
+| OPPKDecrypt -> "PKD"
+| OPPKGenSK -> "PKgenkey"
+| OPPKExtractPK -> "PKmkpk"
 | OPABEncrypt s -> "ABBE[" ^ (String.concat "," (RLSet.elements s)) ^ "]"
 | OPABDecrypt -> "ABBD"
 | OPABGenMSK -> "Gen-AB-MSK"

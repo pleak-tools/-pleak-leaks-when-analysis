@@ -1583,7 +1583,7 @@ let rec (convertStoppingProcWork : stoppingproc -> graphpreparationtype -> DG.t 
 	in
 	(dg4, execafter, cexeafter, timeafter)
 | SPRNetwork (spredges, sprnodes) ->
-	let lastidx = (Array.length spredges) - 1
+	let lastidx = (Array.length spredges)
 	in
 	let (dgres, allends) = convertStoppingProcNetwork spredges sprnodes prep currdg execnode cexenode timenode
 	in
@@ -1610,12 +1610,17 @@ let rec (convertStoppingProcWork : stoppingproc -> graphpreparationtype -> DG.t 
 		in
 		(dg3, execnode, cexenode, outptime)
 and (convertStoppingProcNetwork : stoppingproc array -> sprNetworkNode array -> graphpreparationtype -> DG.t -> GrbInput.attrlocationtype -> GrbInput.attrlocationtype -> GrbInput.attrlocationtype -> DG.t * ((GrbInput.attrlocationtype * GrbInput.attrlocationtype * GrbInput.attrlocationtype) array)) = fun bnetedges bnetnodes prep currdg execnode cexenode timenode ->
-	let result = Array.make (Array.length bnetedges) None
+	let result = Array.make ((Array.length bnetedges) + 1) None
 	in
 	let (dg0, execafter0, cexeafter0, timeafter0) = convertStoppingProcWork bnetedges.(0) {prep with atprocstart = false} currdg execnode cexenode timenode
 	in
 	result.(0) <- Some (execafter0, cexeafter0, timeafter0);
 	let moddg = ref dg0
+	in
+	let readBNEbyIdx idx =
+		if idx >= 0 then bnetedges.(idx) else SPRNil
+	and writeResByIdx idx inp =
+		if idx >= 0 then (result.(idx) <- inp) else (result.(Array.length bnetedges) <- inp)
 	in
 	Array.iter (fun bnetnode -> match bnetnode with
 		| SPRNBranch (srcidx, btask, trueidx, falseidx) ->
@@ -1623,13 +1628,13 @@ and (convertStoppingProcNetwork : stoppingproc array -> sprNetworkNode array -> 
 			in
 			let (dg1, Right (exectrue, exectrueDT, execfalse, execfalseDT), timenode') = convertTask btask {prep with atprocstart = false} !moddg exn0 cen0 tmn0
 			in
-			let (dg2, execaftertrue, cexeaftertrue, timeaftertrue) = convertStoppingProcWork bnetedges.(trueidx) {prep with atprocstart = false} dg1 exectrue exectrueDT timenode'
+			let (dg2, execaftertrue, cexeaftertrue, timeaftertrue) = convertStoppingProcWork (readBNEbyIdx trueidx) {prep with atprocstart = false} dg1 exectrue exectrueDT timenode'
 			in
-			let (dg3, execafterfalse, cexeafterfalse, timeafterfalse) = convertStoppingProcWork bnetedges.(falseidx) {prep with atprocstart = false} dg2 execfalse execfalseDT timenode'
+			let (dg3, execafterfalse, cexeafterfalse, timeafterfalse) = convertStoppingProcWork (readBNEbyIdx falseidx) {prep with atprocstart = false} dg2 execfalse execfalseDT timenode'
 			in
 			moddg := dg3;
-			result.(trueidx) <- Some (execaftertrue, cexeaftertrue, timeaftertrue);
-			result.(falseidx) <- Some (execafterfalse, cexeafterfalse, timeafterfalse)
+			writeResByIdx trueidx (Some (execaftertrue, cexeaftertrue, timeaftertrue));
+			writeResByIdx falseidx (Some (execafterfalse, cexeafterfalse, timeafterfalse))
 		| SPRNJoin (srcidxl, tgtidx) ->
 			let execnodesl = List.map (fun srcidx -> let Some (exn,_,_) = result.(srcidx) in exn) srcidxl
 			and cexenodesl = List.map (fun srcidx -> let Some (_,exn,_) = result.(srcidx) in exn) srcidxl
@@ -1641,11 +1646,12 @@ and (convertStoppingProcNetwork : stoppingproc array -> sprNetworkNode array -> 
 			in
 			let (dg2, timeafter) = GrbInput.addNodesToGraph dg1a prep.currixt timenodesl (nkMerge VTimePoint) (fun _ -> PortMulti VTimePoint)
 			in
-			let (dg3, execend, cexeend, timeend) = convertStoppingProcWork bnetedges.(tgtidx) {prep with atprocstart = false} dg2 execafter cexeafter timeafter
+			let (dg3, execend, cexeend, timeend) = convertStoppingProcWork (readBNEbyIdx tgtidx) {prep with atprocstart = false} dg2 execafter cexeafter timeafter
 			in
 			moddg := dg3;
-			result.(tgtidx) <- Some (execend, cexeend, timeend)
+			writeResByIdx tgtidx (Some (execend, cexeend, timeend))
 	) bnetnodes;
+	(if result.(Array.length bnetedges) = None then result.(Array.length bnetedges) <- result.((Array.length bnetedges) - 1));
 	(!moddg, Array.map (fun (Some x) -> x) result)
 ;;
 
