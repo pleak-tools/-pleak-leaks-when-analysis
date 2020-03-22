@@ -2346,7 +2346,7 @@ let answersToSLI dg answers =
 					SLTAnd (IdtSet.fold (fun filterNodeId ll ->
 						let filterNode = DG.findnode filterNodeId dg
 						in
-						let filterElem = if (match filterNode.nkind.nodeintlbl with NNOperation OPEncrypt | NNOperation (OPABEncrypt _) -> true | _ -> false) then SLTSymEncFail filterNode.id else SLTFilter (filterNode.nkind.nodelabel)
+						let filterElem = if (match filterNode.nkind.nodeintlbl with NNOperation OPEncrypt | NNOperation (OPABEncrypt _) | NNOperation OPPKEncrypt -> true | _ -> false) then SLTSymEncFail filterNode.id else SLTFilter (filterNode.nkind.nodelabel)
 						in
 						filterElem :: ll
 					) badFuns
@@ -2575,7 +2575,7 @@ let checkFlows dg =
 	in
 	let determineFilter n =
 		if n.nkind.nodeintlbl = NNOperation OPEncrypt then Some (SLTSymEncFail n.id) else
-		if (match n.nkind.nodeintlbl with NNOperation (OPABEncrypt _ ) -> true | _ -> false) then Some (SLTSymEncFail n.id) else
+		if (match n.nkind.nodeintlbl with NNOperation (OPABEncrypt _ ) | NNOperation OPPKEncrypt -> true | _ -> false) then Some (SLTSymEncFail n.id) else
 		let d = n.nkind.nodelabel
 		in
 		if ((String.length d) >= 7) && ((safestringsub d 0 7) = "filter_") then Some (SLTFilter d) else 

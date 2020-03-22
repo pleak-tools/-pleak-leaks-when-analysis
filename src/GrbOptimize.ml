@@ -995,6 +995,70 @@ let simplifyABDecrypt dg n =
 	end
 ;;
 
+let simplifyPKDecrypt dg n = (* simple rewrite (with simplifications) from simplifyABDecrypt *)
+	if (match n.nkind.nodeintlbl with NNOperation OPPKDecrypt -> false | _ -> true) then None else
+	begin
+		let (possrckey, possrcct) = DG.nodefoldedges (fun ((IxM cc, _),_, kk) (foundkey, foundct) ->
+			if kk = PortOperInput 1 then (cc.(0), foundct)
+			else if kk = PortOperInput 2 then (foundkey, cc.(0))
+			else (foundkey, foundct)
+		) n (None, None)
+		in
+		match possrckey, possrcct with
+		| Some (privateKeyId,_,privateKeyBackmap), Some (encnid, _, ctbackmap) ->
+		begin
+			let encn = DG.findnode encnid dg
+			and privkeyn = DG.findnode privateKeyId dg
+			in
+			let (IxM encncc) = encn.ixtypemap
+			and (IxM privkeyncc) = privkeyn.ixtypemap
+			in
+			let Some ((),_,encnfwdmap) = encncc.(0)
+			and Some ((),_,privkeynfwdmap) = privkeyncc.(0)
+			in
+			let (possmpk, posspt) = DG.nodefoldedges (fun ((IxM cc,_),_,kk) (foundkey, foundpt) ->
+				if kk = PortOperInput 2 then (cc.(0), foundpt)
+				else if kk = PortOperInput 3 then (foundkey, cc.(0))
+				else (foundkey, foundpt)
+			) encn (None, None)
+			(* and possmsk1 = DG.nodefoldedges (fun ((IxM cc,_),_,kk) foundkey ->
+				if kk = PortOperInput 1 then cc.(0) else foundkey
+			) privkeyn None *)
+			and possmsk1 = Some (privateKeyId, 0, Array.init (let (AITT aa) = privkeyn.inputindextype in Array.length aa.(0)) (fun x -> x))
+			in
+			match possmpk, posspt, possmsk1 with
+			| Some (mpkId,_,mpkBackmap), Some (ptId,_,ptBackmap), Some (mskId,_,mskBySKBackmap) ->
+			begin
+				let mpkn = DG.findnode mpkId dg
+				(* and ptn = DG.findnode pkId dg *)
+				and mskn = DG.findnode mskId dg
+				in
+				let (IxM mpkncc) = mpkn.ixtypemap
+				in
+				let Some ((),_,mpknfwdmap) = mpkncc.(0)
+				in
+				let possmsk2 = DG.nodefoldedges (fun ((IxM cc,_),_,kk) foundkey ->
+					if kk = PortOperInput 1 then cc.(0) else foundkey
+				) mpkn None
+				in
+				match possmsk2, encn.nkind.nodeintlbl, privkeyn.nkind.nodeintlbl, mpkn.nkind.nodeintlbl, mskn.nkind.nodeintlbl with
+				| Some (mskId',_,mskByPKBackmap), NNOperation OPPKEncrypt, NNOperation OPPKGenSK, NNOperation OPPKExtractPK, NNOperation OPPKGenSK when (mskId = mskId') && ((mapCompose [mskBySKBackmap; privkeynfwdmap; privateKeyBackmap]) = (mapCompose [mskByPKBackmap; mpknfwdmap; mpkBackmap; encnfwdmap; ctbackmap])) ->
+				begin
+					let decrepln = { n with
+						nkind = nkId (n.nkind.outputtype);
+						inputs = PortMap.empty
+					}
+					in
+					Some (DG.addedge ((IxM [| Some (ptId, 0, mapCompose [ptBackmap; encnfwdmap; ctbackmap]) |], NewName.get ()), n.id, PortSingle (n.nkind.outputtype)) (DG.changenode decrepln dg))
+				end
+				| _ -> None
+			end
+			| _ -> None
+		end
+		| _ -> None
+	end
+;;
+
 let simplifyError dg n =
 	let alwaysFalse = DG.nodefoldedges (fun ((IxM cc, _), _, prt) b ->
 		if b then true else
@@ -1625,7 +1689,7 @@ sig
 end);;
 
 let simplifyArithmetic dg =
-	let funchain = [simplifyCoalesce; simplifyError; simplifyEquality; contractNoContract; notOfConstant; simplifyFilter; simplifyAnd; simplifyOr; longopOfConst; additionToSum; simplifyDecrypt; simplifyABDecrypt; simplifyAddition; simplifyMax; simplifyMerge; OptimizeAssocLists.optimize; dontOutputNulls]
+	let funchain = [simplifyCoalesce; simplifyError; simplifyEquality; contractNoContract; notOfConstant; simplifyFilter; simplifyAnd; simplifyOr; longopOfConst; additionToSum; simplifyDecrypt; simplifyABDecrypt; simplifyPKDecrypt; simplifyAddition; simplifyMax; simplifyMerge; OptimizeAssocLists.optimize; dontOutputNulls]
 	in
 	TopolSorter.fold (fun nid dgnew ->
 		List.fold_left (fun dgcurr simpfun ->
