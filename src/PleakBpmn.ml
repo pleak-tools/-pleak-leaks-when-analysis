@@ -524,7 +524,7 @@ let collectFromFile grrepr =
 						else nodeonpic
 					with Xml.No_attribute _ -> nodeonpic
 				in
-				let nodeonpic1 = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKprivate" "pkprivate" (tryToPickAttr "pleak:PKDecrypt" "pkdecrypt" (tryToPickAttr "pleak:PKEncrypt" "pkencrypt" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))))))
+				let nodeonpic1 = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKPrivate" "pkprivate" (tryToPickAttr "pleak:PKDecrypt" "pkdecrypt" (tryToPickAttr "pleak:PKEncrypt" "pkencrypt" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))))))
 				in
 				addResNode nodeonpic1;
 				addHierEdge nodeonpic1.id;
@@ -543,7 +543,7 @@ let collectFromFile grrepr =
 						else nodeonpic
 					with Xml.No_attribute _ -> nodeonpic
 				in
-				let nodeonpic = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKprivate" "pkprivate" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:sqlScript" "sql" ({
+				let nodeonpic = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKPrivate" "pkprivate" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:sqlScript" "sql" ({
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPDataset;
 					attrs = (* RLMap.add "name" ((RLMap.find "name" attrwithscript) ^ " {" ^  !currentprocessname ^"}") *) if tagname = "bpmn2:dataStoreReference" then RLMap.add "datastore" "yes" attrwithname else attrwithname;
@@ -2435,9 +2435,9 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 			let keyname = RLMap.find "pkenckey" node.attrs
 			and textname = RLMap.find "pkplaintext" node.attrs
 			in
-			let encargs = [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv"); DEVar (keyname, "key"); DEVar (textname, "key")]
+			let encargs = [DEVar ("IV_for_" ^ (NewName.to_string nodeid), "iv"); DEVar (keyname, "key"); DEVar (textname, "data")]
 			in
-			let deflist = [((outDatasetName, "data"), DEOp (OPPKEncrypt, encargs)) ; ((outDatasetName, "*\\key"), DEVar (textname,"*\\key"))]
+			let deflist = [((outDatasetName, "data"), DEOp (OPPKEncrypt, encargs)) ; ((outDatasetName, "*\\key"), DEVar (textname,"*\\data"))]
 			in
 			((IdtMap.add nodeid deflist tccurr), gcurr, (nodeid :: addivll))
 		end
@@ -3588,7 +3588,7 @@ let makeABBEKeygenProc grrepr =
 			[(IdtSet.empty, "Master_secret_key_for_" ^ groupname)],
 			[skname])
 			))) :: ll
-		) pkpknames pkpkGenTasks
+		) pksknames pkpkGenTasks
 		in
 		let mrnddecl = ("Master_randomness_for_" ^ groupname, RLMap.singleton "rnd" VAny)
 		and mskdecl = ("Master_secret_key_for_" ^ groupname, RLMap.singleton "msk" VAny)
