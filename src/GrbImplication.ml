@@ -1382,33 +1382,72 @@ let removeRedundantMaxEdges dg0 =
 						begin
 							print_endline ("Working with edge no. " ^ (NewName.to_string testeid));
 							output_string tc ("Working with edge no. " ^ (NewName.to_string testeid) ^ "\n");
-							let (ic,oc) = Unix.open_process "z3 -in"
-							in
-							writeBothChans oc tc "(set-option :timeout 20)\n";
-							writeBothChans oc tc "(declare-sort S)\n";
-							writeOrderingToZ3 !currdg oc;
-							writeOrderingToZ3 !currdg tc;
-							print_string "Sent description to Z3\n";
-							let Some (previd, _, backmap) = cc.(0)
-							in
-							Array.iteri (fun idx _ ->
-								writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
-							) na.(0);
-							DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
-								if testeid = eid' then () else
-								let Some (previd',_,backmap') = cc'.(0)
+							let answer =
+							try
+								let inpPipeOut, inpPipeIn = Unix.pipe ()
+								and outpPipeOut, outpPipeIn = Unix.pipe ()
+								and errPipeOut, errPipeIn = Unix.pipe ()
 								in
-								writeBothChans oc tc "(assert (";
-								writeBothChans oc tc (if testeid < eid' then "< " else "<= ");
-								writeBothChans oc tc (idAndArgsToStr previd' backmap');
-								writeBothChans oc tc " ";
-								writeBothChans oc tc (idAndArgsToStr previd backmap);
-								writeBothChans oc tc "))\n"
-							) n0 ();
-							print_endline "Calling check-sat";
-							writeBothChans tc oc "(check-sat)\n";
-							flush oc;
-							let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+								let ic = Unix.in_channel_of_descr inpPipeOut
+								and oc = Unix.out_channel_of_descr outpPipeIn
+								in
+								set_binary_mode_in ic false;
+								set_binary_mode_out oc false;
+								let z3Pid = Unix.create_process "z3" [| "z3"; "-in" |] outpPipeOut inpPipeIn errPipeIn 
+								in
+								writeBothChans oc tc "(set-option :timeout 20)\n";
+								writeBothChans oc tc "(declare-sort S)\n";
+								writeOrderingToZ3 !currdg oc;
+								writeOrderingToZ3 !currdg tc;
+								print_string "Sent description to Z3\n";
+								let Some (previd, _, backmap) = cc.(0)
+								in
+								Array.iteri (fun idx _ ->
+									writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n")
+								) na.(0);
+								DG.nodefoldedges (fun ((IxM cc',eid'),_,_) () ->
+									if testeid = eid' then () else
+									let Some (previd',_,backmap') = cc'.(0)
+									in
+									writeBothChans oc tc "(assert (";
+									writeBothChans oc tc (if testeid < eid' then "< " else "<= ");
+									writeBothChans oc tc (idAndArgsToStr previd' backmap');
+									writeBothChans oc tc " ";
+									writeBothChans oc tc (idAndArgsToStr previd backmap);
+									writeBothChans oc tc "))\n"
+								) n0 ();
+								print_endline "Calling check-sat";
+								writeBothChans tc oc "(check-sat)\n";
+								flush oc;
+								let res =
+									let (rdThis, _, _) = Unix.select [inpPipeOut] [] [] 0.02
+									in
+									if rdThis = [] then
+									begin
+										print_string "Not ready. "; "unknown"
+									end
+									else
+									begin
+										try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+									end
+								in
+								Unix.kill z3Pid 9;
+								Unix.close inpPipeOut;
+								Unix.close inpPipeIn;
+								Unix.close outpPipeOut;
+								Unix.close outpPipeIn;
+								Unix.close errPipeOut;
+								Unix.close errPipeIn;
+								let (_,pstat) = Unix.waitpid [] z3Pid
+								in
+								(
+									match pstat with
+									| Unix.WEXITED x -> print_endline ("z3 terminated normally with exit code " ^ (string_of_int x))
+									| Unix.WSIGNALED x -> print_endline ("z3 was killed with the signal " ^ (string_of_int x))
+									| Unix.WSTOPPED x -> print_endline ("z3 was stopped with the signal " ^ (string_of_int x))
+								);
+								res
+							with Unix.Unix_error (_,_,_) -> (print_string "Got UNIX error. "; "unknown")
 							in
 							print_endline "Received answer";
 							(if answer = "unknown" then
@@ -1423,16 +1462,27 @@ let removeRedundantMaxEdges dg0 =
 								currdg := DG.remedge testeid !currdg;
 								print_endline ("Getting rid of edge no. " ^ (NewName.to_string testeid));
 							end);
-							writeBothChans oc tc "(exit)\n";
 							output_string tc ("Answer is " ^ answer ^ "\n");
-							flush oc;
-							ignore (Unix.close_process (ic,oc));
 						end
 					) n ()
 				end else if n.nkind.nodeintlbl = NNOperation OPLessThan then
 				begin
-					let (ic,oc) = Unix.open_process "z3 -in"
+					let alwaysFalse = ref false
+					and alwaysTrue = ref false
 					in
+					let answer =
+					try
+						let inpPipeOut, inpPipeIn = Unix.pipe ()
+						and outpPipeOut, outpPipeIn = Unix.pipe ()
+						and errPipeOut, errPipeIn = Unix.pipe ()
+						in
+						let ic = Unix.in_channel_of_descr inpPipeOut
+						and oc = Unix.out_channel_of_descr outpPipeIn
+						in
+						set_binary_mode_in ic false;
+						set_binary_mode_out oc false;
+						let z3Pid = Unix.create_process "z3" [| "z3"; "-in" |] outpPipeOut inpPipeIn errPipeIn 
+						in
 					writeBothChans oc tc "(set-option :timeout 20)\n";
 					writeBothChans oc tc "(declare-sort S)\n";
 					writeOrderingToZ3 !currdg oc;
@@ -1446,8 +1496,6 @@ let removeRedundantMaxEdges dg0 =
 					in
 					let Some (srcid1,_,backmap1) = cc1.(0)
 					and Some (srcid2,_,backmap2) = cc2.(0)
-					and alwaysFalse = ref false
-					and alwaysTrue = ref false
 					in
 					Array.iteri (fun idx _ ->
 						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n");
@@ -1461,7 +1509,35 @@ let removeRedundantMaxEdges dg0 =
 					print_endline "Calling check-sat for always false";
 					writeBothChans oc tc "(check-sat)\n";
 					flush oc;
-					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+						let res =
+							let (rdThis, _, _) = Unix.select [inpPipeOut] [] [] 0.02
+							in
+							if rdThis = [] then
+							begin
+								print_string "Not ready. "; "unknown"
+							end
+							else
+							begin
+								try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+							end
+						in
+						Unix.kill z3Pid 9;
+						Unix.close inpPipeOut;
+						Unix.close inpPipeIn;
+						Unix.close outpPipeOut;
+						Unix.close outpPipeIn;
+						Unix.close errPipeOut;
+						Unix.close errPipeIn;
+						let (_,pstat) = Unix.waitpid [] z3Pid
+						in
+						(
+							match pstat with
+							| Unix.WEXITED x -> print_endline ("z3 terminated normally with exit code " ^ (string_of_int x))
+							| Unix.WSIGNALED x -> print_endline ("z3 was killed with the signal " ^ (string_of_int x))
+							| Unix.WSTOPPED x -> print_endline ("z3 was stopped with the signal " ^ (string_of_int x))
+						);
+						res
+					with Unix.Unix_error (_,_,_) -> (print_string "Got UNIX error. "; "unknown")
 					in
 					print_endline "Received answer";
 					output_string tc ("Answer is " ^ answer ^ "\n");
@@ -1473,7 +1549,36 @@ let removeRedundantMaxEdges dg0 =
 						print_endline "The answer was UNSAT";
 						alwaysFalse := true;
 					end);
-					writeBothChans oc tc "(pop)\n";
+					let answer =
+					try
+						let inpPipeOut, inpPipeIn = Unix.pipe ()
+						and outpPipeOut, outpPipeIn = Unix.pipe ()
+						and errPipeOut, errPipeIn = Unix.pipe ()
+						in
+						let ic = Unix.in_channel_of_descr inpPipeOut
+						and oc = Unix.out_channel_of_descr outpPipeIn
+						in
+						set_binary_mode_in ic false;
+						set_binary_mode_out oc false;
+						let z3Pid = Unix.create_process "z3" [| "z3"; "-in" |] outpPipeOut inpPipeIn errPipeIn 
+						in
+					writeBothChans oc tc "(set-option :timeout 20)\n";
+					writeBothChans oc tc "(declare-sort S)\n";
+					writeOrderingToZ3 !currdg oc;
+					writeOrderingToZ3 !currdg tc;
+					print_string "Sent description to Z3\n";
+					let eid1 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 1))
+					and eid2 = IdtSet.choose (DG.edges_to_port !currdg n0.id (PortOperInput 2))
+					in
+					let ((IxM cc1,_),_,_) = DG.findedge eid1 !currdg
+					and ((IxM cc2,_),_,_) = DG.findedge eid2 !currdg
+					in
+					let Some (srcid1,_,backmap1) = cc1.(0)
+					and Some (srcid2,_,backmap2) = cc2.(0)
+					in
+					Array.iteri (fun idx _ ->
+						writeBothChans oc tc ("(declare-fun d" ^ (string_of_int idx) ^ " () S)\n");
+					) na.(0);
 					writeBothChans oc tc "(assert(<= ";
 					writeBothChans oc tc (idAndArgsToStr srcid2 backmap2);
 					writeBothChans oc tc " ";
@@ -1482,7 +1587,35 @@ let removeRedundantMaxEdges dg0 =
 					print_endline "Calling check-sat for always true";
 					writeBothChans oc tc "(check-sat)\n";
 					flush oc;
-					let answer = try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+						let res =
+							let (rdThis, _, _) = Unix.select [inpPipeOut] [] [] 0.02
+							in
+							if rdThis = [] then
+							begin
+								print_string "Not ready. "; "unknown"
+							end
+							else
+							begin
+								try input_line ic with End_of_file -> (print_string "Got EOF. "; "unknown")
+							end
+						in
+						Unix.kill z3Pid 9;
+						Unix.close inpPipeOut;
+						Unix.close inpPipeIn;
+						Unix.close outpPipeOut;
+						Unix.close outpPipeIn;
+						Unix.close errPipeOut;
+						Unix.close errPipeIn;
+						let (_,pstat) = Unix.waitpid [] z3Pid
+						in
+						(
+							match pstat with
+							| Unix.WEXITED x -> print_endline ("z3 terminated normally with exit code " ^ (string_of_int x))
+							| Unix.WSIGNALED x -> print_endline ("z3 was killed with the signal " ^ (string_of_int x))
+							| Unix.WSTOPPED x -> print_endline ("z3 was stopped with the signal " ^ (string_of_int x))
+						);
+						res
+					with Unix.Unix_error (_,_,_) -> (print_string "Got UNIX error. "; "unknown")
 					in
 					print_endline "Received answer";
 					output_string tc ("Answer is " ^ answer ^ "\n");
@@ -1494,9 +1627,6 @@ let removeRedundantMaxEdges dg0 =
 						print_endline "The answer was UNSAT";
 						alwaysTrue := true;
 					end);
-					writeBothChans oc tc "(exit)\n";
-					flush oc;
-					ignore (Unix.close_process (ic,oc));
 					(if !alwaysFalse || !alwaysTrue then
 					begin
 						let nnew = {n with nkind = if !alwaysFalse then nkFalse else nkTrue; inputs = PortMap.empty}

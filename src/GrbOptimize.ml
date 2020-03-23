@@ -37,6 +37,7 @@ let foldIdentity dg =
 	and newdg = ref dg
 	in
 	while !globChanges do
+		print_endline "foldIdentity: start iteration";
 		globChanges := false;
 		newdg := DG.foldedges (fun ((conn,eid),tgt,prt) dgcurr ->
 			let srcidset = connectionsources conn
@@ -47,7 +48,10 @@ let foldIdentity dg =
 				let n = DG.findnode srcid dgcurr
 				in
 				match n.nkind.nodeintlbl with
-		  			| NNId -> changes := true; globChanges := true; DG.nodefoldedges (fun ((upconn,_),_,_) conn' ->
+		  			| NNId -> print_endline ("The edge " ^ (NewName.to_string eid) ^ " comes from Id node " ^ (NewName.to_string srcid)); changes := true; globChanges := true; DG.nodefoldedges (fun ((upconn,_),_,_) conn' ->
+						let IxM [|Some (nsrcid,_,_)|] = upconn
+		  				in
+		  				print_endline ("Make it come from node " ^ (NewName.to_string nsrcid) ^ " instead");
 		  				composeIxM conn' n.id upconn
 	  				) n currconn
 		  			| _ -> currconn

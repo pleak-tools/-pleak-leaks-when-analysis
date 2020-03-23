@@ -419,7 +419,7 @@ let analysis dg isSQL resultfolder =
 			) sccarr); *)
 			(* exit 10; *)
 	ignore (GrbOptimize.areIndicesInOrder "start" dg);
-	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity dg))
+	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity (GrbOptimize.removeDead dg)))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
 	in
