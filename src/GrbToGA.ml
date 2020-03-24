@@ -49,7 +49,14 @@ let toFun = function
 | (OPRealConst r, _) -> string_of_float r
 | (OPBoolConst b, _) -> string_of_bool b
 | (OPNull vt, _) -> "NULL"
-| (OPITE, [b;x;y]) -> "(CASE WHEN " ^ toAexpr b ^ " THEN " ^ toAexpr x ^ " ELSE " ^ toAexpr y ^ " END)" 
+| (OPITE, [RAXoper (OPLessThan, [x1;y1]);x2;y2]) ->
+       if (x1 = x2) && (y1 = y2) then
+           "(LEAST(" ^ toAexpr x1 ^ "," ^ toAexpr y1 ^ "))"
+       else if (x1 = y2) && (y1 = x2) then
+           "(GREATEST(" ^ toAexpr x1 ^ "," ^ toAexpr y1 ^ "))"
+       else
+           "(CASE WHEN " ^ toAexpr (RAXoper (OPLessThan, [x1;y1])) ^ " THEN " ^ toAexpr x2 ^ " ELSE " ^ toAexpr y2 ^ " END)"
+| (OPITE, [b;x;y]) -> "(CASE WHEN " ^ toAexpr b ^ " THEN " ^ toAexpr x ^ " ELSE " ^ toAexpr y ^ " END)"
 | (OPTuple _, xs) -> "(" ^ (String.concat ", " (List.map toAexpr xs)) ^ ")"
 | (OPProject s, _) -> error "projections inside arithetic expressions are not supported yet"
 | (OPOrder b, _) -> error "orderings inside arithetic expressions are not supported yet"
