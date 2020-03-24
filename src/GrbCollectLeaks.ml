@@ -2475,7 +2475,7 @@ let analyseEncryptionFailures dg beforeFailureAnalysis =
 		) slomap
 	) !desc;
 	print_newline ();
-	let oc = open_out "flowcheckbeforeenc"
+	let oc = open_tmpout "flowcheckbeforeenc"
 	in
 	writeFlowChecksFromSLT dg !desc oc;
 	close_out oc;
@@ -2550,7 +2550,7 @@ let processChecks dg =
 		in
 		let dg1 = GrbOptimize.removeDead ( (* fst *) (GrbOptimize.simplifyArithmetic dg0))
 		in
-		let oc = open_out ("finalgraph_" ^ (String.concat "_" selChecks) ^ ".dot")
+		let oc = open_tmpout ("finalgraph_" ^ (String.concat "_" selChecks) ^ ".dot")
 		in
 		GrbPrintWithCFlow.printgraph oc dg1;
 		close_out oc;

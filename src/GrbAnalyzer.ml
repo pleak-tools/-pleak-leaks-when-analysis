@@ -1,4 +1,5 @@
 open GrbGraphs;;
+open GrbCommons;;
 
 let graphToTree dg n resultdir =
 	let changedg = ref DG.empty
@@ -56,7 +57,7 @@ let graphToTree dg n resultdir =
 	in
 	let (ewd, gdns) = GrbCollectLeaks.dependencyOfAnOutput !changedg (DG.findnode newnid !changedg) None
 	in
-	let oc = open_out ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
+	let oc = open_tmpout ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
 	in
 	GrbPrint2.printgraph oc !changedg gdns;
 	close_out oc;
@@ -86,7 +87,7 @@ let leaksAsGraphs dg resultdir isSQL =
 			in
 			let dg'' = GrbOptimize.removeDead dg'
 			in
-			let oc = open_out ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
+			let oc = open_tmpout ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
@@ -131,7 +132,7 @@ let debugGraph dg =
 	in
 	let dg4 = GrbOptimize.removeDead dg3
 	in
-	let oc = open_out "debug_v3481.dot"
+	let oc = open_tmpout "debug_v3481.dot"
 	in
 	GrbPrint.printgraph oc dg4;
 	close_out oc
@@ -349,7 +350,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "algusgraaf.dot"
+	let oc = open_tmpout "algusgraaf.dot"
 	in
 	GrbPrint.printgraph oc dg;
 	close_out oc;
@@ -372,7 +373,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "nodeads.dot"
+	let oc = open_tmpout "nodeads.dot"
 	in
 	GrbPrint.printgraph oc dgnodead;
 	close_out oc;
@@ -383,12 +384,12 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl1 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified1.dot"
+	let oc = open_tmpout "simplified1.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl1;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl1" dgsimpl1);
-(*	let oc = open_out "simplification.dot"
+(*	let oc = open_tmpout "simplification.dot"
 	in
 	GrbPrint.printgraph oc changeDesc;
 	close_out oc;
@@ -401,7 +402,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "algusgraaf.dot"
+	let oc = open_tmpout "algusgraaf.dot"
 	in
 	GrbPrint.printgraph oc dg;
 	close_out oc;
@@ -424,7 +425,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "nodeads.dot"
+	let oc = open_tmpout "nodeads.dot"
 	in
 	GrbPrint.printgraph oc dgnodead;
 	close_out oc;
@@ -433,7 +434,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsplitted 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "splitted.dot"
+	let oc = open_tmpout "splitted.dot"
 	in
 	GrbPrint.printgraph oc dgsplitted;
 	close_out oc;
@@ -446,7 +447,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgNoAndAnds 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "noandands.dot"
+	let oc = open_tmpout "noandands.dot"
 	in
 	GrbPrint.printgraph oc dgNoAndAnds;
 	close_out oc;
@@ -455,7 +456,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgjoinedNodes 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "joinednodes.dot"
+	let oc = open_tmpout "joinednodes.dot"
 	in
 	GrbPrint.printgraph oc dgjoinedNodes;
 	close_out oc;
@@ -476,7 +477,7 @@ let analysis dg isSQL resultfolder =
 							else dgcurr
 					) dgjoinedNodes dgcomp
 					in
-					let oc = open_out failinimi
+					let oc = open_tmpout failinimi
 					in
 					GrbPrint.printgraph oc dgcomp2;
 					close_out oc
@@ -502,7 +503,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl0 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified0.dot"
+	let oc = open_tmpout "simplified0.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl0;
 	close_out oc;
@@ -512,7 +513,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl1 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified1.dot"
+	let oc = open_tmpout "simplified1.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl1;
 	close_out oc;
@@ -522,7 +523,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl2 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified2.dot"
+	let oc = open_tmpout "simplified2.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl2;
 	close_out oc;
@@ -532,7 +533,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified3.dot"
+	let oc = open_tmpout "simplified3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
@@ -542,7 +543,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified3a.dot"
+	let oc = open_tmpout "simplified3a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3a;
 	close_out oc;
@@ -552,12 +553,12 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4.dot"
+	let oc = open_tmpout "simplified4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl4" dgsimpl4);
-	let oc = open_out "descMax.z3"
+	let oc = open_tmpout "descMax.z3"
 	in
 	GrbImplication.writeOrderingToZ3 dgsimpl4 oc;
 	GrbImplication.askZ3ForRedundantMaxEdges dgsimpl4 oc;
@@ -567,7 +568,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4aa 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4aa.dot"
+	let oc = open_tmpout "simplified4aa.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4aa;
 	close_out oc;
@@ -577,14 +578,14 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4a.dot"
+	let oc = open_tmpout "simplified4a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4a;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl4a" dgsimpl4a);
 	let dgstraightened =
 		let prgr x g =
-			let oc = open_out ("interm_" ^ (string_of_int x) ^ ".dot")
+			let oc = open_tmpout ("interm_" ^ (string_of_int x) ^ ".dot")
 			in
 			GrbPrint.printgraph oc g;
 			close_out oc
@@ -624,7 +625,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "straightened.dot"
+	let oc = open_tmpout "straightened.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
@@ -633,7 +634,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified3.dot"
+	let oc = open_tmpout "r2simplified3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
@@ -642,7 +643,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4.dot"
+	let oc = open_tmpout "r2simplified4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
@@ -651,7 +652,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_1 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_1.dot"
+	let oc = open_tmpout "r2simplified4_1.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_1;
 	close_out oc;
@@ -660,7 +661,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_2 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_2.dot"
+	let oc = open_tmpout "r2simplified4_2.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_2;
 	close_out oc;
@@ -669,7 +670,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_3.dot"
+	let oc = open_tmpout "r2simplified4_3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_3;
 	close_out oc;
@@ -679,7 +680,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_4a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_4a.dot"
+	let oc = open_tmpout "r2simplified4_4a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_4a;
 	close_out oc;
@@ -688,7 +689,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_4 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_4.dot"
+	let oc = open_tmpout "r2simplified4_4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_4;
 	close_out oc;
@@ -697,7 +698,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_5 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4_5.dot"
+	let oc = open_tmpout "r2simplified4_5.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_5;
 	close_out oc;
@@ -705,7 +706,7 @@ let analysis dg isSQL resultfolder =
 	in
 	let dgsimpl4_6 = GrbImplication.removeRedundantEdgesWithZ3 dgsimpl4_5 (Some foundDeps)
 	in
-	let oc = open_out "r2simplified4_6.dot"
+	let oc = open_tmpout "r2simplified4_6.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4_6;
 	close_out oc;
@@ -715,7 +716,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified5.dot"
+	let oc = open_tmpout "r2simplified5.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5;
 	close_out oc; 
@@ -724,7 +725,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified5a.dot"
+	let oc = open_tmpout "r2simplified5a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5a;
 	close_out oc; 
@@ -732,7 +733,7 @@ let analysis dg isSQL resultfolder =
 	in
 	let dgsimpl5a2 = GrbImplication.removeRedundantEdgesWithZ3 dgsimpl5a (Some foundDeps)
 	in
-	let oc = open_out "r2simplified5a2.dot"
+	let oc = open_tmpout "r2simplified5a2.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5a2;
 	close_out oc;
@@ -742,7 +743,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5b 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified5b.dot"
+	let oc = open_tmpout "r2simplified5b.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5b;
 	close_out oc; 
@@ -751,7 +752,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified6.dot"
+	let oc = open_tmpout "r2simplified6.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6;
 	close_out oc; 
@@ -760,55 +761,55 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified6a.dot"
+	let oc = open_tmpout "r2simplified6a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6a;
 	close_out oc; 
 	let dgsimpl6_1 = GrbOptimize.foldIdentity dgsimpl6a
 	in
-	let oc = open_out "r2simplified6a_1.dot"
+	let oc = open_tmpout "r2simplified6a_1.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_1;
 	close_out oc;
 	let dgsimpl6_2 = GrbOptimize.simplifyArithmetic dgsimpl6_1
 	in
-	let oc = open_out "r2simplified6a_2.dot"
+	let oc = open_tmpout "r2simplified6a_2.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_2;
 	close_out oc;
 	let dgsimpl6_3 = GrbOptimize.foldAndsTogether dgsimpl6_2
 	in
-	let oc = open_out "r2simplified6a_3.dot"
+	let oc = open_tmpout "r2simplified6a_3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_3;
 	close_out oc;
 	let dgsimpl6_4 = GrbOptimize.foldMaxsTogether dgsimpl6_3
 	in
-	let oc = open_out "r2simplified6a_4.dot"
+	let oc = open_tmpout "r2simplified6a_4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_4;
 	close_out oc;
 	let dgsimpl6_5 = GrbOptimize.reduceAllNodeDim dgsimpl6_4
 	in
-	let oc = open_out "r2simplified6a_5.dot"
+	let oc = open_tmpout "r2simplified6a_5.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_5;
 	close_out oc;
 	let dgsimpl6_6 = GrbOptimize.foldIdentity (GrbOptimize.compareDiffFunDeps (GrbOptimize.removeDead dgsimpl6_5))
 	in
-	let oc = open_out "r2simplified6a_6.dot"
+	let oc = open_tmpout "r2simplified6a_6.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_6;
 	close_out oc;
 	let dgsimpl6_7 = GrbOptimize.putTogetherNodes (GrbOptimize.removeDead dgsimpl6_6)
 	in
-	let oc = open_out "r2simplified6a_7.dot"
+	let oc = open_tmpout "r2simplified6a_7.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_7;
 	close_out oc;
 	let dgsimpl6_8 = GrbOptimize.singleOutputPerValue (GrbOptimize.removeDead dgsimpl6_7)
 	in
-	let oc = open_out "r2simplified6a_8.dot"
+	let oc = open_tmpout "r2simplified6a_8.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6_8;
 	close_out oc;
@@ -817,7 +818,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "pre_finalgraph.dot"
+	let oc = open_tmpout "pre_finalgraph.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
@@ -826,7 +827,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgAfterZ3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "afterZ3.dot"
+	let oc = open_tmpout "afterZ3.dot"
 	in
 	GrbPrint.printgraph oc dgAfterZ3;
 	close_out oc;
@@ -834,7 +835,7 @@ let analysis dg isSQL resultfolder =
 	in
 	let dgLastDimEq = GrbImplication.removeRedundantEdgesWithZ3 dgAfterZ3 (Some foundDeps)
 	in
-	let oc = open_out "r2lastdimeq.dot"
+	let oc = open_tmpout "r2lastdimeq.dot"
 	in
 	GrbPrint.printgraph oc dgLastDimEq;
 	close_out oc;
@@ -844,7 +845,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "finalgraph.dot"
+	let oc = open_tmpout "finalgraph.dot"
 	in
 	(if isSQL then GrbPrint.printgraph else GrbPrintWithCFlow.printgraph) oc dgSingleOutputs;
 	close_out oc;
@@ -853,7 +854,7 @@ let analysis dg isSQL resultfolder =
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
 	(* GrbDimSimpl.dimanalysis dgSingleOutputs; *)
-	let oc = open_out "desc4.z3"
+	let oc = open_tmpout "desc4.z3"
 	in
 	GrbImplication.writeBooleanDescToZ3 dgSingleOutputs oc None;
 	GrbImplication.askZ3ForRedundantEdges dgSingleOutputs oc;
@@ -877,7 +878,7 @@ let analysis dg isSQL resultfolder =
 	(if isSQL then makeLegend dgSingleOutputs resultfolder);
 	(if not isSQL then
 	begin
-		let oc = open_out "descAll.z3"
+		let oc = open_tmpout "descAll.z3"
 		in
 		GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
 		close_out oc;
@@ -886,7 +887,7 @@ let analysis dg isSQL resultfolder =
 		in
 		let preEncAnalysisResults = GrbCollectLeaks.checkFlows dgSingleOutputs
 		in
-		let mc = open_out "marshalplace"
+		let mc = open_tmpout "marshalplace"
 		in
 		Marshal.to_channel mc ((dgSingleOutputs : DG.t), (preEncAnalysisResults : ((GrbCollectLeaks.studyleakstype list) * (GrbCollectLeaks.studyleakstype GrbCollectLeaks.SLOMap.t GrbCollectLeaks.SLIMap.t)) list)) [];
 		close_out mc;

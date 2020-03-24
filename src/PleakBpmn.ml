@@ -3425,7 +3425,7 @@ let printgrgr grrepr fn =
 			String.sub s 0 (findAndHash 0)
 		with Not_found -> s)
 	in
-	let oc = open_out fn
+	let oc = open_tmpout fn
 	in
 	let output_node (node : nodeonpicturetype) =
 		output_string oc ("v" ^ (NewName.to_string node.id) ^ " [shape=");

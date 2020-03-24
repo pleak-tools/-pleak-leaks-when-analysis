@@ -1,3 +1,6 @@
+let tempdir = ref "tempfiles";;
+
+let open_tmpout fn = open_out (!tempdir ^ "/" ^ fn);;
 
 type ('a,'b) either = Left of 'a | Right of 'b ;;
 

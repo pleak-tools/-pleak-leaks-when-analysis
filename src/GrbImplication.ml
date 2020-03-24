@@ -1335,7 +1335,7 @@ let removeRedundantMaxEdges dg0 =
 	let x = !rrewz_entry_count
 	in
 	rrewz_entry_count := x + 1;
-	let tc = open_out ("removeRedundantMaxEdges_" ^ (string_of_int x))
+	let tc = open_tmpout ("removeRedundantMaxEdges_" ^ (string_of_int x))
 	in
 	let currdg = ref (DG.foldedges (fun ((IxM cc, eid), ntgt, prt) dgcurr ->
 		let Some (srcid, _, _) = cc.(0)
@@ -1651,7 +1651,7 @@ let removeRedundantEdgesWithZ3 dg0 eqDimsInformation =
 	let x = !rrewz_entry_count
 	in
 	rrewz_entry_count := x + 1;
-	let tc = open_out ("removeRedundantEdges_" ^ (string_of_int x))
+	let tc = open_tmpout ("removeRedundantEdges_" ^ (string_of_int x))
 	in
 	let currdg = ref dg0
 	and runagain = ref true
@@ -1815,7 +1815,7 @@ let removeRedundantEdgesWithZ3 dg0 eqDimsInformation =
 	let x = !rrewz_entry_count
 	in
 	rrewz_entry_count := x + 1;
-	let tc = open_out ("removeRedundantEdges_" ^ (string_of_int x))
+	let tc = open_tmpout ("removeRedundantEdges_" ^ (string_of_int x))
 	in
 	let currdg = ref dg0
 	and runagain = ref true
@@ -2229,10 +2229,10 @@ let checkFlows dg possFName =
 		List.filter isMinimal allResults
 	in
 	let (ic,oc) = match possFName with
-		| Some fname -> let occ = open_out fname in (None, occ)
+		| Some fname -> let occ = open_tmpout fname in (None, occ)
 		| None -> let (icc,occ) = Unix.open_process "z3 -in" in (Some icc, occ)
 	in
-(*	let oc = open_out "descAll.z3"
+(*	let oc = open_tmpout "descAll.z3"
 	in *)
 	output_string oc "(set-option :timeout 2000)\n";
 	writeItAllToZ3 dg oc;

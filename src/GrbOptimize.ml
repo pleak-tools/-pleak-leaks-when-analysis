@@ -2400,7 +2400,7 @@ let moveAllOverEqualDims dg =
 		currdg := removeDead !currdg;
 		if printGraphs then
 		begin (*
-			let oc = open_out ("moveOver_" ^ (string_of_int !iterNum) ^ ".dot")
+			let oc = open_tmpout ("moveOver_" ^ (string_of_int !iterNum) ^ ".dot")
 			in
 			GrbPrint.printgraph oc !currdg;
 			close_out oc; *)
@@ -3014,7 +3014,7 @@ let compareDiffFunDeps dg =
 				end
 		) dg ()
 	done;
-	let oc = open_out "diffundeps"
+	let oc = open_tmpout "diffundeps"
 	in
 	IdtMap.iter (fun nid props ->
 		List.iter (fun (clidimscoords, addrfunname, addrfunnum, srvdimname, x) ->
@@ -3159,7 +3159,7 @@ let moveOneNotNodeUp dg oldeid =
 		) n (dg0, IdtSet.empty)
 		in
 		print_endline ("Moved a NOT node over AND/OR. The ID of the old node was " ^ (NewName.to_string ntgt.id)); (*
-		let oc = open_out ("moveNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		let oc = open_tmpout ("moveNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
 		close_out oc; *)
@@ -3172,7 +3172,7 @@ let moveOneNotNodeUp dg oldeid =
 		let dg1 = DG.changenode ntgtnew dg
 		in
 		print_endline ("Merged a NOT node with a constant. The Id of the NOT node was " ^ (NewName.to_string ntgt.id)); (*
-		let oc = open_out ("mergeNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		let oc = open_tmpout ("mergeNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
 		close_out oc; *)
@@ -3196,7 +3196,7 @@ let moveOneNotNodeUp dg oldeid =
 		let dg1 = DG.addedge ((IxM [| Some (srcid, 0, newbackmap) |], NewName.get ()), ntgt.id, PortSingle VBoolean) (DG.changenode ntgtnew dg)
 		in
 		print_endline ("Joined two NOT-nodes. The Id of the ID-node is " ^ (NewName.to_string ntgt.id)); (*
-		let oc = open_out ("joinNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		let oc = open_tmpout ("joinNOT_" ^ (NewName.to_string ntgt.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
 		close_out oc; *)
@@ -3359,7 +3359,7 @@ let moveOneLongMergeNode dg oldeid =
 	) newmerge IdtSet.empty
 	in
 	print_string ("The new node has id " ^ (NewName.to_string xtgt.id) ^ "\n"); (*
-	let oc = open_out ("addLMerge_" ^ (NewName.to_string xtgt.id) ^ ".dot")
+	let oc = open_tmpout ("addLMerge_" ^ (NewName.to_string xtgt.id) ^ ".dot")
 	in
 	GrbPrint.printgraph oc dg2;
 	close_out oc; *)
@@ -3405,7 +3405,7 @@ let moveOneLongorNode dg oldeid =
 		let dg2 = DG.addedge ((IxM [| Some (srcid, 0, srcbackmapNew) |], oldeid), ntgt.id, prt) dg1
 		in
 		print_endline ("Joined two LongOr-nodes. The Id of the remaining node is " ^ (NewName.to_string ntgt.id)); (*
-		let oc = open_out ("joinLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		let oc = open_tmpout ("joinLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg2;
 		close_out oc; *)
@@ -3463,7 +3463,7 @@ let moveOneLongorNode dg oldeid =
 		) newntgt initedges
 		in
 		print_endline ("Moved a LongOr-node. The Id of the created operation node is " ^ (NewName.to_string ntgt.id)); (*
-		let oc = open_out ("moveLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
+		let oc = open_tmpout ("moveLongOr_" ^ (NewName.to_string ntgt.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
 		close_out oc; *)
@@ -3589,7 +3589,7 @@ let moveOneJustMergeNode dg oldeid =
 		let newedgeids' = IdtSet.filter (fun neid -> try ignore (DG.findedge neid dg2); true with Not_found -> false) newedgeids
 		in
 		print_endline ("Joined the Merge nodes over the edge with id " ^ (NewName.to_string oldeid)); (*
-		let oc = open_out ("joinSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
+		let oc = open_tmpout ("joinSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg2;
 		close_out oc; *)
@@ -3629,7 +3629,7 @@ let moveOneJustMergeNode dg oldeid =
 		let considerEdges = if becomesOr then IdtSet.empty else DG.nodefoldoutedges dgn (fun ((_,eid),_,_) s -> IdtSet.add eid s) (DG.findnode ntgtnew.id dgn) IdtSet.empty
 		in
 		print_endline ("Moved the Merge over the node with id " ^ (NewName.to_string ntgtnew.id) ^ " entering with edge " ^ (NewName.to_string oldeid)); (*
-		let oc = open_out ("moveSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
+		let oc = open_tmpout ("moveSMerge_" ^ (NewName.to_string oldeid) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dgn;
 		close_out oc; *)
@@ -3757,7 +3757,7 @@ let moveOneFilterNode dg oldeid =
 		in
 		let putEidBack = match srcn.nkind.nodeintlbl with NNFilter _ -> true | _ -> false
 		in (*
-		let oc = open_out ("joinFilter_" ^ (NewName.to_string combNode.id) ^ ".dot")
+		let oc = open_tmpout ("joinFilter_" ^ (NewName.to_string combNode.id) ^ ".dot")
 		in
 		GrbPrint.printgraph oc dg1;
 		close_out oc; *)
@@ -3843,7 +3843,7 @@ let moveOneFilterNode dg oldeid =
 	) newfilter IdtSet.empty
 	in
 	print_endline ("The new node has id " ^ (NewName.to_string xtgt.id)); (*
-	let oc = open_out ("addFilter_" ^ (NewName.to_string xtgt.id) ^ ".dot")
+	let oc = open_tmpout ("addFilter_" ^ (NewName.to_string xtgt.id) ^ ".dot")
 	in
 	GrbPrint.printgraph oc dg2;
 	close_out oc; *)

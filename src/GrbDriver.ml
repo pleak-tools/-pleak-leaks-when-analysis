@@ -1,3 +1,4 @@
+open GrbCommons;;
 open GrbGraphs;;
 
 let rec printoutxml colltags indent thing = 
@@ -25,6 +26,32 @@ let rec printoutxml colltags indent thing =
 ;;
 
 let () =
+	if Sys.file_exists !tempdir then
+	begin
+		if not (Sys.is_directory !tempdir) then
+		let i = ref 0
+		and success = ref false
+		and pref = !tempdir
+		in
+		while not !success do
+			let testname = pref ^ (string_of_int !i)
+			in
+			if Sys.file_exists testname then
+			begin
+				i := !i + 1
+			end
+			else
+			begin
+				Unix.mkdir testname 0o775;
+				tempdir := testname;
+				success := true
+			end
+		done
+	end
+	else
+	begin
+		Unix.mkdir !tempdir 0o775
+	end;
 	let (resultfolder, possBpmnFile, jumpToEnd) = GrbAnalyzer.readParameters ()
 	in
 	match possBpmnFile with

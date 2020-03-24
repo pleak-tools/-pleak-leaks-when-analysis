@@ -1700,7 +1700,7 @@ let rec (convertBPMNwork : anyproc -> graphpreparationtype -> DG.t -> GrbInput.a
 ;;
 
 let (convertBPMN : anyproc -> datasetdeclaration list -> RLSet.t -> DG.t) = fun bproc datasetdefs inpdatasets ->
-	let oc = open_out "procdescr"
+	let oc = open_tmpout "procdescr"
 	in
 	printanyproc oc 0 bproc;
 	output_string oc "\n";
