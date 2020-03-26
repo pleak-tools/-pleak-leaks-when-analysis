@@ -88,7 +88,8 @@ let rec toQexpr ot oc schema = function
                                                                                             if String.contains oldcolname '.' then (y,newcolname)
                                                                                             else (x,newcolname)
                                                                                          else (x,y)) sel0 in
-                                                       let prefix = List.hd (String.split_on_char '.' newcolname) in
+                                                       (* let prefix = List.hd (String.split_on_char '.' newcolname) in*)
+						       let prefix = try String.sub newcolname 0 (String.index newcolname '.') with Not_found -> newcolname in
                                                        let fr = if (prefix = newcolname) then fr0
                                                                 else List.map (fun (tn,ta) -> if RLMap.mem oldcolname (fst (RLMap.find tn schema)) then (tn,prefix) else (tn,ta)) fr0 in
                                                        (sel, fr, wh, gr, ord)
