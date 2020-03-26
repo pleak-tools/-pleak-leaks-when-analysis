@@ -505,12 +505,12 @@ let collectFromFile grrepr =
 				in
 				addResEdge connEdge
 			end
-			else if (tagname = "bpmn2:task") || (tagname = "bpmn2:userTask") then
+			else if (tagname = "bpmn2:task") || (tagname = "bpmn2:userTask") || (tagname = "bpmn2:sendTask") then
 			begin
 				let nodeonpic0 = {
 					id = idForStr (Xml.attrib xmlprocesselem "id");
 					kind = NOPTask;
-					attrs = RLMap.add "tasktype" (if tagname = "bpmn2:task" then "plain" else "user") attrwithname;
+					attrs = RLMap.add "tasktype" (if tagname = "bpmn2:userTask" then "user" else "plain") attrwithname;
 				}
 				in
 				let tryToPickAttr xmlname parsename (nodeonpic : nodeonpicturetype) =
@@ -652,7 +652,7 @@ let collectFromFile grrepr =
 			(if not (IdtMap.mem edgerec.tgt !resgraphnodes) then print_string "The target is missing\n")
 		end
 	) !resgraphedges;
-	let resnodestmp1 = IdtMap.merge (fun k x y -> match x,y with None,None -> None | Some xx,None -> Some (xx, IdtSet.empty) | Some xx, Some yy -> Some (xx,yy)  ) !resgraphnodes outg
+	let resnodestmp1 = IdtMap.merge (fun k x y -> match x,y with None,None -> None | Some xx,None -> Some (xx, IdtSet.empty) | Some xx, Some yy -> Some (xx,yy) | None, Some _ -> raise (Failure (revIdForStr k)) ) !resgraphnodes outg
 	in
 	let resnodestmp2 = IdtMap.merge (fun k x y -> match x,y with None,None -> None | Some (xx1,xx2), None -> Some (xx1,xx2, IdtSet.empty) | Some (xx1,xx2), Some yy -> Some (xx1,xx2,yy) | None, Some _ -> raise (Failure (revIdForStr k))) resnodestmp1 incom
 	in
