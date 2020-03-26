@@ -5,7 +5,7 @@ open GrbGraphs;;
 
 exception Err of string
 
-let addPrefix x y = if String.equal x "" then y else x ^ "." ^ y
+let addPrefix x y = if (x = "") then y else x ^ "." ^ y
 let alias (x,y) = String.concat " AS "  [x;y]
 let error e      = raise (Err ("ERROR: " ^ e))
 let failure e    = begin
@@ -84,12 +84,12 @@ let rec toQexpr ot oc schema = function
 
     (* assumption: we only rename pure columns of subexpr and do not go deeper *)
     | RARenameCol (oldcolname, newcolname, subexp) ->  let (sel0, fr0, wh, gr, ord) = toQexpr ot oc schema subexp in
-                                                       let sel = List.map (fun (x,y) -> if String.equal y oldcolname then
+                                                       let sel = List.map (fun (x,y) -> if (y = oldcolname) then
                                                                                             if String.contains oldcolname '.' then (y,newcolname)
                                                                                             else (x,newcolname)
                                                                                          else (x,y)) sel0 in
                                                        let prefix = List.hd (String.split_on_char '.' newcolname) in
-                                                       let fr = if String.equal prefix newcolname then fr0
+                                                       let fr = if (prefix = newcolname) then fr0
                                                                 else List.map (fun (tn,ta) -> if RLMap.mem oldcolname (fst (RLMap.find tn schema)) then (tn,prefix) else (tn,ta)) fr0 in
                                                        (sel, fr, wh, gr, ord)
 
@@ -110,7 +110,7 @@ let rec toQexpr ot oc schema = function
                                                    let newSchema = RLMap.add newtblname (newColMap, newKeys) schema in
 
                                                    output_string oc (queryString newtblname (sel0, fr0, wh0, gr0, ord0) ^ "\n\n");
-                                                   if (not (String.equal "" ot)) && (String.equal newtblname ot) then ([],[],[],[],[]) else
+                                                   if (not ("" = ot)) && (newtblname = ot) then ([],[],[],[],[]) else
                                                    let (sel1, fr1, wh1, gr1, ord1) = toQexpr ot oc newSchema restexp in
                                                    (sel1, fr1, wh1, gr1, ord1)
 
