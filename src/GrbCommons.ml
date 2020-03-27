@@ -1,3 +1,6 @@
+let tempdir = ref "tempfiles";;
+
+let open_tmpout fn = open_out (!tempdir ^ "/" ^ fn);;
 
 type ('a,'b) either = Left of 'a | Right of 'b ;;
 
@@ -7,6 +10,8 @@ let eithercomp leftcomp rightcomp a b =
   | Left _, Right _ -> -1
   | Right _, Left _ -> 1
   | Right x, Right y -> rightcomp x y;;
+
+let listmapmaybe f l = List.map (function Some x -> x) (List.filter (function None -> false | Some _ -> true) (List.map f l));;
 
 let const k x = k;;
 

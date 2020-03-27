@@ -282,7 +282,7 @@ let onlyAggregation dgtmp ((({l=filterloc; t=filterTbls;} as filterlocAndTbls), 
 	in
 	let (dg', expfilterlocAndTbls) = putIdNodeOnTop !changedg filterlocAndTbls ixtype jointtype projmapsub
 	in
-	let (dg'', iseqlocAndTbls) = addNodesToGraph dg' jointtype (expfilterlocAndTbls :: eqnodelocs) nkAnd (fun _ -> PortStrictB)
+	let (dg'', iseqlocAndTbls) = addNodesToGraph dg' jointtype (expfilterlocAndTbls :: eqnodelocs) nkAnd (fun _ -> PortStrictB true)
 	in
 	let longorid = NewName.get ()
 	in
@@ -295,14 +295,14 @@ let onlyAggregation dgtmp ((({l=filterloc; t=filterTbls;} as filterlocAndTbls), 
 		inputs = PortMap.empty;
 	}
 	in
-	let dg3 = DG.addedge ((identityIndexMap iseqlocAndTbls.l jointtype, NewName.get ()), longorid, PortSingleB) (DG.addnode longornode dg'')
+	let dg3 = DG.addedge ((identityIndexMap iseqlocAndTbls.l jointtype, NewName.get ()), longorid, PortSingleB true) (DG.addnode longornode dg'')
 	and longorTbls = iseqlocAndTbls.t
 	in
 	changedg := dg3;
 	let filteredNodeLocs = RLMap.map (fun attrlocAndTbls ->
 		let vtype = (DG.findnode attrlocAndTbls.l !changedg).nkind.outputtype
 		in
-		let (dgnew, filteridAndTbls) = addNodesToGraph !changedg jointtype [iseqlocAndTbls; attrlocAndTbls] (nkFilter vtype) (fun x -> if x = 0 then PortSingleB else PortSingle vtype)
+		let (dgnew, filteridAndTbls) = addNodesToGraph !changedg jointtype [iseqlocAndTbls; attrlocAndTbls] (nkFilter vtype) (fun x -> if x = 0 then PortSingleB true else PortSingle vtype)
 		in
 		changedg := dgnew;
 		filteridAndTbls
@@ -345,7 +345,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let (dg'', addfilterlocAndTbls) = computeAnyExp dg' subloc filterexp
 	in
-	let (dg3, newfilterloc) = addNodesToGraph dg'' ixtype [oldfilterlocAndTbls; addfilterlocAndTbls] nkAnd (fun _ -> PortStrictB)
+	let (dg3, newfilterloc) = addNodesToGraph dg'' ixtype [oldfilterlocAndTbls; addfilterlocAndTbls] nkAnd (fun _ -> PortStrictB true)
 	in
 	(dg3, (newfilterloc, attrlocs, ixtype))
 | RAProject (subexp, keptcols) ->
@@ -377,7 +377,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		idid
 	) tbllocs projmaps
 	in
-	let (newdg, resfilterloc) = addNodesToGraph !changedg jointixtype conjsources nkAnd (fun _ -> PortStrictB)
+	let (newdg, resfilterloc) = addNodesToGraph !changedg jointixtype conjsources nkAnd (fun _ -> PortStrictB true)
 	in 
 	(newdg, (resfilterloc, !resattrloc, jointixtype))
 (* | RAInnerJoin of (raexpressiontype list) * ((string * string) list) *)
@@ -407,7 +407,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let (dg4, computationresult) = computeAnyExp dg3 (rightfilterid, expandedattrs, jointtype) joinexp
 	in
-	let (dg5, alleqid) = addNodesToGraph dg4 jointtype [rightfilterid; computationresult] nkAnd (fun _ -> PortStrictB)
+	let (dg5, alleqid) = addNodesToGraph dg4 jointtype [rightfilterid; computationresult] nkAnd (fun _ -> PortStrictB true)
 	in
 	let longorid = {l = NewName.get (); t = alleqid.t;}
 	in
@@ -420,16 +420,16 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		inputs = PortMap.empty;
 	}
 	in
-	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB) (DG.addnode longornode dg5)
+	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB true) (DG.addnode longornode dg5)
 	in
-	let (dg7, withnullsloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortSingleB)
+	let (dg7, withnullsloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortUSingleB)
 	in
-	let (dg8, finalfilterloc) = addNodesToGraph dg7 ixtypeleft [filterlocleft; withnullsloc] nkAnd (fun _ -> PortStrictB)
+	let (dg8, finalfilterloc) = addNodesToGraph dg7 ixtypeleft [filterlocleft; withnullsloc] nkAnd (fun _ -> PortStrictB true)
 	in
 	let (dg9, attrlocboth) = RLMap.fold (fun attrname attrid (dgtmp,attrloctmp) ->
 		let vt = (DG.findnode attrid.l dg8).nkind.outputtype
 		in
-		let (dgnew, nullloc) = addNodesToGraph dgtmp ixtypeleft [] (nkOperation 0 vt (OPNull vt)) (fun _ -> PortUnstrB)
+		let (dgnew, nullloc) = addNodesToGraph dgtmp ixtypeleft [] (nkOperation 0 vt (OPNull vt)) (fun _ -> PortUnstrB true)
 		in
 		(dgnew, RLMap.add attrname nullloc attrloctmp)
 	) attrlocright (dg8, attrlocleft)
@@ -509,7 +509,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let (dg4, rightfilterid) = putIdNodeOnTop !changedg filterlocright ixtyperight jointtype projmapright
 	in
-	let (dg5, alleqid) = addNodesToGraph dg4 jointtype (rightfilterid :: equalitychecks) nkAnd (fun _ -> PortStrictB)
+	let (dg5, alleqid) = addNodesToGraph dg4 jointtype (rightfilterid :: equalitychecks) nkAnd (fun _ -> PortStrictB true)
 	in
 	let longorid = {l = NewName.get (); t = alleqid.t;}
 	in
@@ -522,9 +522,9 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		inputs = PortMap.empty;
 	}
 	in
-	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB) (DG.addnode longornode dg5)
+	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB true) (DG.addnode longornode dg5)
 	in
-	let (dg7, finalfilterloc) = addNodesToGraph dg6 ixtypeleft [filterlocleft; longorid] nkAnd (fun _ -> PortStrictB)
+	let (dg7, finalfilterloc) = addNodesToGraph dg6 ixtypeleft [filterlocleft; longorid] nkAnd (fun _ -> PortStrictB true)
 	in
 	(dg7, (finalfilterloc, attrlocleft, ixtypeleft))
 | RADifference (leftexp, rightexp) ->
@@ -550,7 +550,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 	in
 	let (dg4, rightfilterid) = putIdNodeOnTop !changedg filterlocright ixtyperight jointtype projmapright
 	in
-	let (dg5, alleqid) = addNodesToGraph dg4 jointtype (rightfilterid :: equalitychecks) nkAnd (fun _ -> PortStrictB)
+	let (dg5, alleqid) = addNodesToGraph dg4 jointtype (rightfilterid :: equalitychecks) nkAnd (fun _ -> PortStrictB true)
 	in
 	let longorid = {l = NewName.get (); t = alleqid.t;}
 	in
@@ -563,11 +563,11 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 		inputs = PortMap.empty;
 	}
 	in
-	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB) (DG.addnode longornode dg5)
+	let dg6 = DG.addedge ((identityIndexMap alleqid.l jointtype, NewName.get ()), longorid.l, PortSingleB true) (DG.addnode longornode dg5)
 	in
-	let (dg6a, flippedloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortSingleB)
+	let (dg6a, flippedloc) = addNodesToGraph dg6 ixtypeleft [longorid] nkNot (fun _ -> PortUSingleB)
 	in
-	let (dg7, finalfilterloc) = addNodesToGraph dg6a ixtypeleft [filterlocleft; flippedloc] nkAnd (fun _ -> PortStrictB)
+	let (dg7, finalfilterloc) = addNodesToGraph dg6a ixtypeleft [filterlocleft; flippedloc] nkAnd (fun _ -> PortStrictB true)
 	in
 	(dg7, (finalfilterloc, attrlocleft, ixtypeleft))
 | RANewColumn (subexp, colname, colexp) ->
@@ -626,7 +626,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 			in
 			let origindextype = AITT [| [|(dimvt, Some dimname)|] |]
 			in
-			let (dg1, tdnid) = addNodesToGraph !changedg origindextype [] (nkTakeDim dimname dimvt) (fun _ -> PortSingleB)
+			let (dg1, tdnid) = addNodesToGraph !changedg origindextype [] (nkTakeDim dimname dimvt) (fun _ -> PortSingleB true)
 			in
 			let (dg2, idnid) = putIdNodeOnTop dg1 tdnid origindextype variantixtype (IxM [| Some ((), 0, [| dimidx |]) |])
 			in
@@ -723,7 +723,7 @@ let rec (convertRAwork : DG.t -> dblocationtype -> raexpressiontype -> DG.t * ta
 			(dgc, eqLoc :: prevLocs)
 		) contractcols (dg3, [])
 		in
-		let (dg4, bothFilterLoc) = addNodesToGraph dg3a jointixtype (nextExpFilterLoc :: updateExpFilterLoc :: joinCondLocs) nkAnd (fun _ -> PortStrictB)
+		let (dg4, bothFilterLoc) = addNodesToGraph dg3a jointixtype (nextExpFilterLoc :: updateExpFilterLoc :: joinCondLocs) nkAnd (fun _ -> PortStrictB true)
 		in
 		changedg := dg4;
 		(bothFilterLoc, cntnodeloc, jointixtype)
@@ -825,7 +825,6 @@ and (computeAnyExp : DG.t -> tablelocationtype -> raanyexp -> DG.t * attrlocatio
 	let newkind,nports = match opname with
 		| OPPlus
 		| OPDiv
-		| OPPow
 		| OPMult
 		| OPGeoDist
 		| OPCeiling
@@ -836,15 +835,15 @@ and (computeAnyExp : DG.t -> tablelocationtype -> raanyexp -> DG.t * attrlocatio
 		| OPLessEqual -> nkOperation 2 VBoolean OPLessEqual, (fun i -> PortOperInput (i + 1))
 		| OPGreaterThan -> nkOperation 2 VBoolean OPLessThan, (fun i -> if i = 0 then PortOperInput 2 else PortOperInput 1)
 		| OPGreaterEqual -> nkOperation 2 VBoolean OPLessEqual, (fun i -> if i = 0 then PortOperInput 2 else PortOperInput 1)
-		| OPAnd -> nkAnd, (fun _ -> PortStrictB)
-		| OPOr -> nkOr, (fun _ -> PortUnstrB)
-		| OPNot -> nkNot, (fun _ -> PortSingleB)
-		| OPIntConst x -> nkOperation 0 VInteger opname, (fun _ -> PortUnstrB)
-		| OPStringConst s -> nkOperation 0 VString opname, (fun _ -> PortUnstrB)
-		| OPRealConst r -> nkOperation 0 VReal opname, (fun _ -> PortUnstrB)
-		| OPBoolConst b -> nkOperation 0 VBoolean opname, (fun _ -> PortUnstrB)
-		| OPNull vt -> nkOperation 0 vt opname, (fun _ -> PortUnstrB)
-		| OPITE -> let vt = (DG.findnode (List.hd (List.tl arglocs)).l dg').nkind.outputtype in nkITE vt, (fun i -> if i = 0 then PortSingleB else if i = 1 then PortTrue vt else PortFalse vt)
+		| OPAnd -> nkAnd, (fun _ -> PortStrictB true)
+		| OPOr -> nkOr, (fun _ -> PortUnstrB true)
+		| OPNot -> nkNot, (fun _ -> PortUSingleB)
+		| OPIntConst x -> nkOperation 0 VInteger opname, (fun _ -> PortUnstrB true)
+		| OPStringConst s -> nkOperation 0 VString opname, (fun _ -> PortUnstrB true)
+		| OPRealConst r -> nkOperation 0 VReal opname, (fun _ -> PortUnstrB true)
+		| OPBoolConst b -> nkOperation 0 VBoolean opname, (fun _ -> PortUnstrB true)
+		| OPNull vt -> nkOperation 0 vt opname, (fun _ -> PortUnstrB true)
+		| OPITE -> let vt = (DG.findnode (List.hd (List.tl arglocs)).l dg').nkind.outputtype in nkITE vt, (fun i -> if i = 0 then PortSingleB true else if i = 1 then PortTrue vt else PortFalse vt)
 	in
 	addNodesToGraph dg' ixtype arglocs newkind nports
 ;;
@@ -861,7 +860,7 @@ let convertRA dbdesc raexp =
     in
     let origvaltype = orignode.nkind.outputtype
     in
-  	let (dgnew, newid) = addNodesToGraph !changedg ixtype [extloc; origid] (nkOutput origvaltype origid.t) (fun x -> if x = 0 then PortSingleB else (PortSingle origvaltype))
+  	let (dgnew, newid) = addNodesToGraph !changedg ixtype [extloc; origid] (nkOutput origvaltype origid.t) (fun x -> if x = 0 then PortSingleB true else (PortSingle origvaltype))
   	in
   	changedg := dgnew;
   	newid

@@ -1,15 +1,47 @@
 open GrbGraphs;;
+open GrbCommons;;
 
 let graphToTree dg n resultdir =
 	let changedg = ref DG.empty
 	in
 	let rec mkDeepCopy n =
-		let newn = {n with
-			id = NewName.get ();
-			inputs = PortMap.empty
-		}
+		let (upid, downid, portmapfun) = if n.nkind.nodeintlbl = NNLongAnd true then
+		begin
+			let newn = {n with
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				nkind = nkLongOr
+			}
+			and prenot = {
+				nkind = nkNot;
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = n.inputindextype;
+				outputindextype = n.inputindextype;
+				ixtypemap = identityIndexMap () n.inputindextype
+			}
+			and postnot = {
+				nkind = nkNot;
+				id = NewName.get ();
+				inputs = PortMap.empty;
+				inputindextype = n.outputindextype;
+				outputindextype = n.outputindextype;
+				ixtypemap = identityIndexMap () n.outputindextype
+			}
+			in
+			changedg := DG.addedge ((identityIndexMap prenot.id n.inputindextype, NewName.get ()), newn.id, PortSingleB true) (DG.addedge ((identityIndexMap newn.id n.outputindextype, NewName.get ()), postnot.id, PortUSingleB) (DG.addnode newn (DG.addnode prenot (DG.addnode postnot !changedg))));
+			(prenot.id, postnot.id, fun _ -> PortUSingleB)
+		end else
+		begin
+			let newn = {n with
+				id = NewName.get ();
+				inputs = PortMap.empty
+			}
+			in
+			changedg := DG.addnode newn !changedg;
+			(newn.id, newn.id, fun x -> x)
+		end
 		in
-		changedg := DG.addnode newn !changedg;
 		DG.nodefoldedges (fun ((IxM cc, eid), _, prt) () ->
 			let Some (srcid, _, backmap) = cc.(0)
 			in
@@ -17,15 +49,15 @@ let graphToTree dg n resultdir =
 			in
 			let newsrcid = mkDeepCopy src
 			in
-			changedg := DG.addedge ((IxM [| Some (newsrcid, 0, backmap) |], NewName.get ()), newn.id, prt) !changedg
+			changedg := DG.addedge ((IxM [| Some (newsrcid, 0, backmap) |], NewName.get ()), upid, portmapfun prt) !changedg
 		) n ();
-		newn.id
+		downid
 	in
 	let newnid = mkDeepCopy n
 	in
 	let (ewd, gdns) = GrbCollectLeaks.dependencyOfAnOutput !changedg (DG.findnode newnid !changedg) None
 	in
-	let oc = open_out ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
+	let oc = open_tmpout ("tree_of_" ^ (NewName.to_string n.id) ^ ".dot")
 	in
 	GrbPrint2.printgraph oc !changedg gdns;
 	close_out oc;
@@ -55,7 +87,7 @@ let leaksAsGraphs dg resultdir isSQL =
 			in
 			let dg'' = GrbOptimize.removeDead dg'
 			in
-			let oc = open_out ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
+			let oc = open_tmpout ("deps_of_" ^ (NewName.to_string n.id) ^ ".dot")
 			in
 			GrbPrintWithCFlow.printgraph oc dg'';
 			close_out oc;
@@ -96,11 +128,11 @@ let debugGraph dg =
 	in
 	let dg2 = DG.addnode nn dg'
 	in
-	let dg3 = DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingleB) (DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingle VBoolean) dg2)
+	let dg3 = DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingleB true) (DG.addedge ((identityIndexMap n.id n.outputindextype, NewName.get ()), nn.id,PortSingle VBoolean) dg2)
 	in
 	let dg4 = GrbOptimize.removeDead dg3
 	in
-	let oc = open_out "debug_v3481.dot"
+	let oc = open_tmpout "debug_v3481.dot"
 	in
 	GrbPrint.printgraph oc dg4;
 	close_out oc
@@ -150,7 +182,7 @@ let writeFlowChecks dg answers oc =
 		isFirst := false;
 		let inpNode = DG.findnode inpNodeId dg
 		in
-		let inpName = inpNode.nkind.nodelabel inpNode.ixtypemap
+		let inpName = inpNode.nkind.nodelabel
 		in
 		output_string oc "\n    \"";
 		output_string oc (String.sub inpName 6 ((String.length inpName) - 6));
@@ -202,16 +234,16 @@ let writeFlowChecks dg answers oc =
 						isNotFstInGrp := true;
 						let filterNode = DG.findnode filterNodeId dg
 						in
-						let filtername = filterNode.nkind.nodelabel filterNode.ixtypemap
+						let filtername = if filterNode.nkind.nodeintlbl = NNOperation OPEncrypt then ("Encryption no. " ^ (NewName.to_string filterNode.id) ^ " fails") else (filterNode.nkind.nodelabel) ^ " is passed"
 						in
-						output_string oc (filtername ^ " is passed")
+						output_string oc filtername
 					) badFuns;
 					IdtSet.iter (fun checkNodeId ->
 						(if !isNotFstInGrp then output_string oc " AND ");
 						isNotFstInGrp := true;
 						let checkNode = DG.findnode checkNodeId dg
 						in
-						let checkname = checkNode.nkind.nodelabel checkNode.ixtypemap
+						let checkname = checkNode.nkind.nodelabel
 						in
 						output_string oc (checkname ^ " holds")
 					) badChecks;
@@ -224,12 +256,25 @@ let writeFlowChecks dg answers oc =
 	) transpAnswers;
 	output_string oc "\n  ]\n}\n"
 ;;
+
+let writeEncKeyFlows dg answers oc =
+	IdtMap.iter (fun inpid encnset ->
+		output_string oc ("Key material " ^ (NewName.to_string inpid) ^ " is used in encryptions {");
+		let isfst = ref true
+		in
+		IdtSet.iter (fun encnid ->
+			(if !isfst then isfst := false else output_string oc ", ");
+			output_string oc (NewName.to_string encnid)
+		) encnset;
+		output_string oc "}\n"
+	) answers
+;;
 	
 (*	
 	IdtMap.iter (fun inpNodeId inpAnswers ->
 		let inpNode = DG.findnode inpNodeId dg
 		in
-		let inpName = inpNode.nkind.nodelabel inpNode.ixtypemap
+		let inpName = inpNode.nkind.nodelabel
 		in
 		RLMap.iter (fun outpName (withAll, withNone, withFilter, withCheck) ->
 			output_string oc (String.sub inpName 6 ((String.length inpName) - 6));
@@ -249,7 +294,7 @@ let writeFlowChecks dg answers oc =
 						isNotFirst := true;
 						let filterNode = DG.findnode filterNodeId dg
 						in
-						let filtername = filterNode.nkind.nodelabel filterNode.ixtypemap
+						let filtername = filterNode.nkind.nodelabel
 						in
 						output_string oc (" " ^ filtername ^ " is passed")
 					end
@@ -261,7 +306,7 @@ let writeFlowChecks dg answers oc =
 						isNotFirst := true;
 						let checkNode = DG.findnode checkNodeId dg
 						in
-						let checkname = checkNode.nkind.nodelabel checkNode.ixtypemap
+						let checkname = checkNode.nkind.nodelabel
 						in
 						output_string oc (" " ^ checkname ^ " holds")
 					end
@@ -294,14 +339,18 @@ let readParameters () =
 		end
 	);
 	let bpmnFile = if (Array.length Sys.argv) = 2 then None else (Some Sys.argv.(2))
-	in (resultfolder, bpmnFile)
+	in
+	let jumpstart = (Array.length Sys.argv) > 3
+	in
+	(resultfolder, bpmnFile, jumpstart)
 ;;
 
+(*
 let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "algusgraaf.dot"
+	let oc = open_tmpout "algusgraaf.dot"
 	in
 	GrbPrint.printgraph oc dg;
 	close_out oc;
@@ -317,13 +366,66 @@ let analysis dg isSQL resultfolder =
 					print_newline ()
 				end
 			) sccarr);
+			(* exit 10; *)
 	ignore (GrbOptimize.areIndicesInOrder "start" dg);
 	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity dg))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "nodeads.dot"
+	let oc = open_tmpout "nodeads.dot"
+	in
+	GrbPrint.printgraph oc dgnodead;
+	close_out oc;
+	let (dgAfterSimpl (*, changeDesc *)) = GrbOptimize.simplifyArithmetic dgnodead
+	in
+	let dgsimpl1 = GrbOptimize.removeDead (GrbOptimize.foldIdentity dgAfterSimpl)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl1 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "simplified1.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl1;
+	close_out oc;
+	ignore (GrbOptimize.areIndicesInOrder "simpl1" dgsimpl1);
+(*	let oc = open_tmpout "simplification.dot"
+	in
+	GrbPrint.printgraph oc changeDesc;
+	close_out oc;
+	leaksAsGraphs changeDesc resultfolder false *)
+;;
+*)
+
+
+let analysis dg isSQL resultfolder =
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dg 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "algusgraaf.dot"
+	in
+	GrbPrint.printgraph oc dg;
+	close_out oc;
+	(*debugGraph dg;*)
+(*			(let sccarr = GrbOptimize.SCCFinder.scc_array dg
+			in
+			print_string "Found strongly connected components\n";
+			Array.iter (fun nodelist ->
+				if (List.length nodelist) > 1 then
+				begin
+					print_string "Found a component: ";
+					print_string (String.concat ", " (List.map NewName.to_string nodelist));
+					print_newline ()
+				end
+			) sccarr); *)
+			(* exit 10; *)
+	ignore (GrbOptimize.areIndicesInOrder "start" dg);
+	let dgnodead = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "blaah1" (GrbOptimize.foldIdentity (GrbOptimize.removeDead dg)))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgnodead 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "nodeads.dot"
 	in
 	GrbPrint.printgraph oc dgnodead;
 	close_out oc;
@@ -332,7 +434,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsplitted 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "splitted.dot"
+	let oc = open_tmpout "splitted.dot"
 	in
 	GrbPrint.printgraph oc dgsplitted;
 	close_out oc;
@@ -345,7 +447,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgNoAndAnds 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "noandands.dot"
+	let oc = open_tmpout "noandands.dot"
 	in
 	GrbPrint.printgraph oc dgNoAndAnds;
 	close_out oc;
@@ -354,17 +456,64 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgjoinedNodes 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "joinednodes.dot"
+	let oc = open_tmpout "joinednodes.dot"
 	in
 	GrbPrint.printgraph oc dgjoinedNodes;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "joinedNodes" dgjoinedNodes);
-	let dgsimpl1 = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic dgjoinedNodes))
+(*			(let sccarr = GrbOptimize.SCCFinder.scc_array dgjoinedNodes
+			in
+			print_string "Found strongly connected components\n";
+			let print_nodelist nodelist failinimi =
+					let dgcomp = List.fold_right (fun nid dgcurr ->
+						DG.addnode {(DG.findnode nid dgjoinedNodes) with inputs = PortMap.empty} dgcurr
+					) nodelist DG.empty
+					in
+					let dgcomp2 = DG.foldedges (fun ((IxM cc,eid),ntgt,prt) dgcurr ->
+						let Some (srcid,_,_) = cc.(0)
+						in
+						if (DG.hasnode srcid dgcomp) && (DG.hasnode ntgt.id dgcomp) then
+							DG.addedge ((IxM cc, eid), ntgt.id, prt) dgcurr
+							else dgcurr
+					) dgjoinedNodes dgcomp
+					in
+					let oc = open_tmpout failinimi
+					in
+					GrbPrint.printgraph oc dgcomp2;
+					close_out oc
+			and getACycle nodelist =
+				let rec wf lastid fnds =
+					let Some nextid = DG.nodefoldedges (fun ((IxM cc, _),_,_) res ->
+					) dgjoinedNodes None
+					in
+					...
+			in
+			Array.iteri (fun idx nodelist ->
+				if (List.length nodelist) > 1 then
+				begin
+					print_string "Found a component: ";
+					print_string (String.concat ", " (List.map NewName.to_string nodelist));
+					print_newline ();
+					print_nodelist nodelist ("komponent_" ^ (string_of_int idx) ^ ".dot")
+				end
+			) sccarr);
+*)
+	let dgsimpl0 = GrbOptimize.removeDead (GrbOptimize.unrollCycles dgjoinedNodes (GrbOptimize.proposeMultiplicity dgjoinedNodes))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl0 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "simplified0.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl0;
+	close_out oc;
+	ignore (GrbOptimize.areIndicesInOrder "simpl0" dgsimpl0);
+	let dgsimpl1 = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic dgsimpl0))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl1 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified1.dot"
+	let oc = open_tmpout "simplified1.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl1;
 	close_out oc;
@@ -374,7 +523,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl2 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified2.dot"
+	let oc = open_tmpout "simplified2.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl2;
 	close_out oc;
@@ -384,7 +533,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified3.dot"
+	let oc = open_tmpout "simplified3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
@@ -394,22 +543,22 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified3a.dot"
+	let oc = open_tmpout "simplified3a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3a;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl3a" dgsimpl3a);
-	let dgsimpl4 = GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3a)
+	let dgsimpl4 = GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3a None)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4.dot"
+	let oc = open_tmpout "simplified4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl4" dgsimpl4);
-	let oc = open_out "descMax.z3"
+	let oc = open_tmpout "descMax.z3"
 	in
 	GrbImplication.writeOrderingToZ3 dgsimpl4 oc;
 	GrbImplication.askZ3ForRedundantMaxEdges dgsimpl4 oc;
@@ -419,7 +568,7 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4aa 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4aa.dot"
+	let oc = open_tmpout "simplified4aa.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4aa;
 	close_out oc;
@@ -429,17 +578,54 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "simplified4a.dot"
+	let oc = open_tmpout "simplified4a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4a;
 	close_out oc;
 	ignore (GrbOptimize.areIndicesInOrder "simpl4a" dgsimpl4a);
-	let dgstraightened = GrbOptimize.removeDead ( GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4a)))))))))
+	let dgstraightened =
+		let prgr x g =
+			let oc = open_tmpout ("interm_" ^ (string_of_int x) ^ ".dot")
+			in
+			GrbPrint.printgraph oc g;
+			close_out oc
+		in
+		let g1 = GrbOptimize.foldIdentity dgsimpl4a
+		in
+		prgr 1 g1;
+		let g2 = GrbOptimize.simplifyArithmetic g1
+		in
+		prgr 2 g2;
+		let g3 = GrbOptimize.foldAndsTogether g2
+		in
+		prgr 3 g3;
+		let g4 = GrbOptimize.foldMaxsTogether g3
+		in
+		prgr 4 g4;
+		let g5 = GrbOptimize.reduceAllNodeDim g4
+		in
+		prgr 5 g5;
+		let g6 = GrbOptimize.removeDead g5
+		in
+		prgr 6 g6;
+		let g7 = GrbImplication.removeRedundantEdgesWithZ3 g6 None
+		in
+		prgr 7 g7;
+		let g8 = GrbOptimize.removeDead g7
+		in
+		prgr 8 g8;
+		let g9 = GrbOptimize.putTogetherNodes g8
+		in
+		prgr 9 g9;
+		let g10 = GrbOptimize.removeDead g9
+		in
+		g10
+(*	let dgstraightened = GrbOptimize.removeDead ( GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4a)))))))))  *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "straightened.dot"
+	let oc = open_tmpout "straightened.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
@@ -448,34 +634,125 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified3.dot"
+	let oc = open_tmpout "r2simplified3.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl3;
 	close_out oc;
-	let dgsimpl4 = GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3)))
+	let dgsimpl4 = GrbOptimize.removeDead (GrbImplication.removeRedundantMaxEdges (GrbOptimize.removeDead (GrbOptimize.moveAllOverEqualDims (GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 dgsimpl3 None)))))
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified4.dot"
+	let oc = open_tmpout "r2simplified4.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl4;
 	close_out oc;
-	let dgsimpl5 =  (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4)))
+	let dgsimpl4_1 = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4)))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_1 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_1.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_1;
+	close_out oc;
+	let dgsimpl4_2 = GrbOptimize.removeDead (GrbOptimize.noIntermediateNOTs (GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.getRidOfNaeloobs dgsimpl4_1))))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_2 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_2.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_2;
+	close_out oc;
+	let dgsimpl4_3 = GrbOptimize.removeDead (GrbOptimize.putTogetherNodes dgsimpl4_2)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_3 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_3.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_3;
+	close_out oc;
+	(* (if isSQL then () else exit 10); *)
+	let dgsimpl4_4a = GrbOptimize.simplifyMergeSources dgsimpl4_3
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_4a 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_4a.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_4a;
+	close_out oc;
+	let dgsimpl4_4 = GrbOptimize.removeDead (GrbOptimize.areIndicesInOrder "simplifyMergeSources" dgsimpl4_4a)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_4 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_4.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_4;
+	close_out oc;
+	let dgsimpl4_5 = GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.removeDead (GrbOptimize.simplifyArithmetic (GrbOptimize.singleOutputPerValue (GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.compareDiffFunDeps (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl4_4))))))))))))))
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl4_5 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified4_5.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_5;
+	close_out oc;
+	let (_,foundDeps) = GrbOptimize.dimFunDepsToDimEqs dgsimpl4_5
+	in
+	let dgsimpl4_6 = GrbImplication.removeRedundantEdgesWithZ3 dgsimpl4_5 (Some foundDeps)
+	in
+	let oc = open_tmpout "r2simplified4_6.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl4_6;
+	close_out oc;
+	(* Try z3 simplification up here *)
+	let dgsimpl5 = (* GrbOptimize.moveLongorsDown (GrbOptimize.removeDead ( GrbOptimize.moveNotsUp ( *) GrbOptimize.removeDead (GrbOptimize.moveFilterDown (GrbOptimize.removeDead (GrbOptimize.moveJustMergeDown (GrbOptimize.removeDead (GrbOptimize.moveMergeDown dgsimpl4_6))))) (* ))) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified5.dot"
+	let oc = open_tmpout "r2simplified5.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl5;
 	close_out oc; 
-	let dgsimpl6 = GrbOptimize.dimFunDepsToDimEqs (GrbOptimize.removeDead dgsimpl5)
+	let dgsimpl5a = GrbOptimize.removeDead (GrbOptimize.foldIdentity dgsimpl5)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5a 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified5a.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl5a;
+	close_out oc; 
+	let (_,foundDeps) = GrbOptimize.dimFunDepsToDimEqs dgsimpl5a
+	in
+	let dgsimpl5a2 = GrbImplication.removeRedundantEdgesWithZ3 dgsimpl5a (Some foundDeps)
+	in
+	let oc = open_tmpout "r2simplified5a2.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl5a2;
+	close_out oc;
+	(* Try z3 simplification up here *)
+	let dgsimpl5b = GrbOptimize.removeDead (GrbOptimize.noIntermediateNOTs dgsimpl5a2)
+	in
+	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl5b 0
+	in
+	print_string "Number of nodes: "; print_int numnodes; print_newline ();
+	let oc = open_tmpout "r2simplified5b.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl5b;
+	close_out oc; 
+	let (dgsimpl6,_) = GrbOptimize.dimFunDepsToDimEqs (GrbOptimize.removeDead dgsimpl5b)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified6.dot"
+	let oc = open_tmpout "r2simplified6.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6;
 	close_out oc; 
@@ -484,44 +761,102 @@ let analysis dg isSQL resultfolder =
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgsimpl6a 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "r2simplified6a.dot"
+	let oc = open_tmpout "r2simplified6a.dot"
 	in
 	GrbPrint.printgraph oc dgsimpl6a;
 	close_out oc; 
-	let dgstraightened = GrbOptimize.singleOutputPerValue (GrbOptimize.removeDead (GrbOptimize.putTogetherNodes (GrbOptimize.removeDead (GrbOptimize.reduceAllNodeDim (GrbOptimize.foldMaxsTogether (GrbOptimize.foldAndsTogether (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity dgsimpl6a))))))))
+	let dgsimpl6_1 = GrbOptimize.foldIdentity dgsimpl6a
+	in
+	let oc = open_tmpout "r2simplified6a_1.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_1;
+	close_out oc;
+	let dgsimpl6_2 = GrbOptimize.simplifyArithmetic dgsimpl6_1
+	in
+	let oc = open_tmpout "r2simplified6a_2.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_2;
+	close_out oc;
+	let dgsimpl6_3 = GrbOptimize.foldAndsTogether dgsimpl6_2
+	in
+	let oc = open_tmpout "r2simplified6a_3.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_3;
+	close_out oc;
+	let dgsimpl6_4 = GrbOptimize.foldMaxsTogether dgsimpl6_3
+	in
+	let oc = open_tmpout "r2simplified6a_4.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_4;
+	close_out oc;
+	let dgsimpl6_5 = GrbOptimize.reduceAllNodeDim dgsimpl6_4
+	in
+	let oc = open_tmpout "r2simplified6a_5.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_5;
+	close_out oc;
+	let dgsimpl6_6 = GrbOptimize.foldIdentity (GrbOptimize.compareDiffFunDeps (GrbOptimize.removeDead dgsimpl6_5))
+	in
+	let oc = open_tmpout "r2simplified6a_6.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_6;
+	close_out oc;
+	let dgsimpl6_7 = GrbOptimize.putTogetherNodes (GrbOptimize.removeDead dgsimpl6_6)
+	in
+	let oc = open_tmpout "r2simplified6a_7.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_7;
+	close_out oc;
+	let dgsimpl6_8 = GrbOptimize.singleOutputPerValue (GrbOptimize.removeDead dgsimpl6_7)
+	in
+	let oc = open_tmpout "r2simplified6a_8.dot"
+	in
+	GrbPrint.printgraph oc dgsimpl6_8;
+	close_out oc;
+	let dgstraightened = GrbOptimize.removeDead (GrbOptimize.simplifyArithmetic dgsimpl6_8)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgstraightened 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "pre_finalgraph.dot"
+	let oc = open_tmpout "pre_finalgraph.dot"
 	in
 	GrbPrint.printgraph oc dgstraightened;
 	close_out oc;
-	let dgAfterZ3 = GrbImplication.removeRedundantEdgesWithZ3 dgstraightened
+	let dgAfterZ3 = (* GrbImplication.removeRedundantEdgesWithZ3 *) dgstraightened
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgAfterZ3 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "afterZ3.dot"
+	let oc = open_tmpout "afterZ3.dot"
 	in
 	GrbPrint.printgraph oc dgAfterZ3;
 	close_out oc;
-	let dgSingleOutputs = (* GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 ( *)  GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead dgAfterZ3))) (* )) *)
+	let (_,foundDeps) = GrbOptimize.dimFunDepsToDimEqs dgAfterZ3
+	in
+	let dgLastDimEq = GrbImplication.removeRedundantEdgesWithZ3 dgAfterZ3 (Some foundDeps)
+	in
+	let oc = open_tmpout "r2lastdimeq.dot"
+	in
+	GrbPrint.printgraph oc dgLastDimEq;
+	close_out oc;
+	(* Try z3 simplification up here *)
+	let dgSingleOutputs = (* GrbOptimize.removeDead (GrbImplication.removeRedundantEdgesWithZ3 ( *)  GrbOptimize.removeDead (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.foldIdentity (GrbOptimize.simplifyArithmetic (GrbOptimize.removeDead dgLastDimEq))))) (* )) *)
 	in
 	let numnodes = DG.foldnodes (fun _ x -> x+1) dgSingleOutputs 0
 	in
 	print_string "Number of nodes: "; print_int numnodes; print_newline ();
-	let oc = open_out "finalgraph.dot"
+	let oc = open_tmpout "finalgraph.dot"
 	in
-	GrbPrintWithCFlow.printgraph oc dgSingleOutputs;
+	(if isSQL then GrbPrint.printgraph else GrbPrintWithCFlow.printgraph) oc dgSingleOutputs;
 	close_out oc;
 (*	let oc = open_out "leakswhen.result"
 	in
 	GrbCollectLeaks.describeAllDependencies oc dgstraightened;
 	close_out oc; *)
-	let oc = open_out "desc4.z3"
+	(* GrbDimSimpl.dimanalysis dgSingleOutputs; *)
+	let oc = open_tmpout "desc4.z3"
 	in
-	GrbImplication.writeBooleanDescToZ3 dgSingleOutputs oc;
+	GrbImplication.writeBooleanDescToZ3 dgSingleOutputs oc None;
 	GrbImplication.askZ3ForRedundantEdges dgSingleOutputs oc;
 	close_out oc;
 			(let dataedges = GrbOptimize.findDataEdges dgSingleOutputs
@@ -543,18 +878,83 @@ let analysis dg isSQL resultfolder =
 	(if isSQL then makeLegend dgSingleOutputs resultfolder);
 	(if not isSQL then
 	begin
-		let oc = open_out "descAll.z3"
+		let oc = open_tmpout "descAll.z3"
 		in
 		GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
 		close_out oc;
-		ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3"));
+		(* ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3")); *)
+		let dgSingleOutputs = GrbImplication.addEncryptionAnalysisNodes dgSingleOutputs
+		in
+		let preEncAnalysisResults = GrbCollectLeaks.checkFlows dgSingleOutputs
+		in
+		let mc = open_tmpout "marshalplace"
+		in
+		Marshal.to_channel mc ((dgSingleOutputs : DG.t), (preEncAnalysisResults : ((GrbCollectLeaks.studyleakstype list) * (GrbCollectLeaks.studyleakstype GrbCollectLeaks.SLOMap.t GrbCollectLeaks.SLIMap.t)) list)) [];
+		close_out mc;
+		let oc = open_out (resultfolder ^ "/flowcheckbeforeenc")
+		in
+		List.iter (fun (additionalSLTs, analresult) ->
+			output_string oc ("\nAnalysis results under the following conditions: " ^ (String.concat ", " (List.map GrbCollectLeaks.string_of_studyleakstype additionalSLTs)) ^ "\n" );
+			GrbCollectLeaks.writeFlowChecksFromSLT dgSingleOutputs analresult oc
+		) preEncAnalysisResults;
+		close_out oc;
+		let afterEncAnalysisResultsList = List.map (fun (additionalSLTs, analresult) -> (additionalSLTs, (GrbCollectLeaks.analyseEncryptionFailures dgSingleOutputs analresult))) preEncAnalysisResults
+		in
+		let afterEncAnalysisResults = GrbCollectLeaks.addAdditionalSLTs afterEncAnalysisResultsList
+		in
+		let afterAnalysisWOKeys = GrbCollectLeaks.SLIMap.map (fun slomap ->
+			GrbCollectLeaks.SLOMap.filter (fun k _ -> match k with GrbCollectLeaks.SLOSymEncKey _ -> false | _ -> true) slomap
+		) afterEncAnalysisResults
+		in
+		let oc = open_out (resultfolder ^ "/flowcheckresults")
+		in
+		GrbCollectLeaks.writeFlowChecksFromSLT dgSingleOutputs afterAnalysisWOKeys oc;
+		close_out oc;
+		
+(*		
+		
+		
+		
+		
 		let aboutFlows = GrbImplication.checkFlows dgSingleOutputs None
 		in
 		let oc = open_out (resultfolder ^ "/flowcheckresults")
 		in
 		writeFlowChecks dgSingleOutputs aboutFlows oc;
+		close_out oc;
+		let keyuses = GrbImplication.findEncryptionKeySources dgSingleOutputs
+		in
+		let oc = open_out (resultfolder ^ "/enckeyuses")
+		in
+		writeEncKeyFlows dgSingleOutputs keyuses oc;
+		close_out oc;
+		let oc = open_out (resultfolder ^ "/flowcheckafterenc")
+		in
+		GrbCollectLeaks.writeFlowChecksFromSLT dgSingleOutputs (GrbCollectLeaks.analyseEncryptionFailures dgSingleOutputs aboutFlows) oc;
 		close_out oc
+*)
 	end
 	)
+;;
+
+
+let simplifyAnalResults resultfolder bpmnFile =
+	let mc = open_in bpmnFile
+	in
+	let (dgSingleOutputs, preEncAnalysisResults) = Marshal.from_channel mc
+	in
+	close_in mc;
+	let afterEncAnalysisResultsList = List.map (fun (additionalSLTs, analresult) -> (additionalSLTs, (GrbCollectLeaks.analyseEncryptionFailures dgSingleOutputs analresult))) preEncAnalysisResults
+	in
+	let afterEncAnalysisResults = GrbCollectLeaks.addAdditionalSLTs afterEncAnalysisResultsList
+	in
+	let afterAnalysisWOKeys = GrbCollectLeaks.SLIMap.map (fun slomap ->
+		GrbCollectLeaks.SLOMap.filter (fun k _ -> match k with GrbCollectLeaks.SLOSymEncKey _ -> false | _ -> true) slomap
+	) afterEncAnalysisResults
+	in
+	let oc = open_out (resultfolder ^ "/flowcheckresults")
+	in
+	GrbCollectLeaks.writeFlowChecksFromSLT dgSingleOutputs afterAnalysisWOKeys oc;
+	close_out oc
 ;;
 
