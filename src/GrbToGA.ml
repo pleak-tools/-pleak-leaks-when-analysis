@@ -69,9 +69,11 @@ in function
 
 (* the output is a triple (sel = [col,alias],from,where,groupby) *)
 let rec toQexpr ot oc schema = function
-    | RATable tblname -> let (colMap,_)   = (if RLMap.mem tblname schema then RLMap.find tblname schema else error (tblname ^ " not found in the schema")) in
-                         let colNames     = List.map fst (RLMap.bindings colMap) in
-                         (List.map (fun x -> (x,x)) colNames, [(tblname,tblname)], [], [], [])
+    | RATable tblname -> if not (RLMap.mem tblname schema) then ([],[],[],[],[])
+                         else
+                             let (colMap,_)   = (if RLMap.mem tblname schema then RLMap.find tblname schema else error (tblname ^ " not found in the schema")) in
+                             let colNames     = List.map fst (RLMap.bindings colMap) in
+                             (List.map (fun x -> (x,x)) colNames, [(tblname,tblname)], [], [], [])
     | RAFilter (subexp, filterexp) -> let (sel, fr, wh, gr, ord) = toQexpr ot oc schema subexp in
                                       let fstr = toAexpr filterexp in
                                       (sel, fr, List.append wh [fstr], gr, ord)
