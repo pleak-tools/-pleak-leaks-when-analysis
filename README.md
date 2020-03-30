@@ -34,7 +34,7 @@ Run `./GrbToGA.native outfilepath [target_object]` to convert the workflow up to
 
 ## Using
 
-You can use both analysers through [Pleak SQL-privacy editor](https://github.com/pleak-tools/pleak-sql-editor).
+You can use both analysers through [Pleak PE-BPMN & Leaks-When editor](https://github.com/pleak-tools/pleak-pe-bpmn-editor).
 
 ## License
 
