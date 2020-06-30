@@ -2558,6 +2558,14 @@ let processChecks dg =
 	) (subsetlist namesAsList))
 ;;
 
+let makeProtectionAbsolute dg =
+	let dgnew = DG.foldedges (fun ((_,eid),n,_) dgcurr ->
+		if n.nkind.nodeintlbl = NNGeneric ("addprotection", 1) then DG.remedge eid dgcurr else dgcurr
+	) dg dg
+	in
+	GrbOptimize.removeDead (GrbOptimize.simplifyArithmetic dgnew)
+;;
+
 let checkFlows dg =
 	let allInputNodes = DG.foldnodes (fun n ss ->
 		match n.nkind.nodeintlbl with

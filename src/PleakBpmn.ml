@@ -524,7 +524,7 @@ let collectFromFile grrepr =
 						else nodeonpic
 					with Xml.No_attribute _ -> nodeonpic
 				in
-				let nodeonpic1 = tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKPrivate" "pkprivate" (tryToPickAttr "pleak:PKDecrypt" "pkdecrypt" (tryToPickAttr "pleak:PKEncrypt" "pkencrypt" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0))))))))))
+				let nodeonpic1 = tryToPickAttr "pleak:OpenConfidentiality" "openconf" (tryToPickAttr "pleak:ProtectConfidentiality" "protectconf" (tryToPickAttr "pleak:PETComputation" "petcomputation" (tryToPickAttr "pleak:PKPublic" "pkpublic" (tryToPickAttr "pleak:PKPrivate" "pkprivate" (tryToPickAttr "pleak:PKDecrypt" "pkdecrypt" (tryToPickAttr "pleak:PKEncrypt" "pkencrypt" (tryToPickAttr "pleak:ABPublic" "abpublic" (tryToPickAttr "pleak:ABPrivate" "abprivate" (tryToPickAttr "pleak:ABDecrypt" "abdecrypt" (tryToPickAttr "pleak:ABEncrypt" "abencrypt" (tryToPickAttr "pleak:SKDecrypt" "skdecrypt" (tryToPickAttr "pleak:SKEncrypt" "skencrypt" (tryToPickAttr "pleak:sqlScript" "sql" nodeonpic0)))))))))))))
 				in
 				addResNode nodeonpic1;
 				addHierEdge nodeonpic1.id;
@@ -758,6 +758,52 @@ let collectFromFile grrepr =
 				and textname = RLMap.find "name" textNode.attrs
 				in
 				{nodeonpic1 with attrs = RLMap.add "pkdeckey" keyname (RLMap.add "pkciphertext" textname nodeonpic1.attrs)}
+			end
+			else if (RLMap.mem "protectconf" nodeonpic1.attrs) || (RLMap.mem "openconf" nodeonpic1.attrs) then
+			begin
+				let incdataeid = grreprIncomingEdgeOfKind grrepr nodeonpic1.id EOPRead
+				and outdataeid = grreprOutgoingEdgeOfKind grrepr nodeonpic1.id EOPWrite
+				in
+				let (incdatan,_,_) = IdtMap.find (IdtMap.find incdataeid grrepr.edges).src grrepr.nodes
+				and (outdatan,_,_) = IdtMap.find (IdtMap.find outdataeid grrepr.edges).tgt grrepr.nodes
+				in
+				let incdataname = RLMap.find "name" incdatan.attrs
+				and outdataname = RLMap.find "name" outdatan.attrs
+				in
+				let attrs1 = RLMap.add "sql" (outdataname ^ ".* = " ^ incdataname ^ ".*") nodeonpic1.attrs
+				in
+				let attrs2 = if (RLMap.mem "protectconf" attrs1) then
+					RLMap.add "addprotection" (Marshal.to_string [outdataname] [Marshal.No_sharing]) attrs1
+				else
+					RLMap.add "removeprotection" (Marshal.to_string [incdataname] [Marshal.No_sharing]) attrs1
+				in
+				{nodeonpic1 with attrs = attrs2}
+			end
+			else if RLMap.mem "petcomputation" nodeonpic1.attrs then
+			begin
+				let jsondesc = RLMap.find "petcomputation" nodeonpic1.attrs
+				in
+				let js = Yojson.Basic.from_string jsondesc
+				in
+				let inps = Yojson.Basic.Util.to_list (Yojson.Basic.Util.member "inputTypes" js)
+				and outs = Yojson.Basic.Util.to_list (Yojson.Basic.Util.member "outputTypes" js)
+				in
+				let rec getprivates = function
+				| [] -> []
+				| jsonpair :: restlist ->
+					let (dsn,_,_) = IdtMap.find (idForStr (Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "id" jsonpair))) grrepr.nodes
+					and protlevel = Yojson.Basic.Util.to_string (Yojson.Basic.Util.member "type" jsonpair)
+					in
+					if protlevel = "private" then (RLMap.find "name" dsn.attrs) :: (getprivates restlist) else getprivates restlist
+				in
+				let ilist = getprivates inps
+				and olist = getprivates outs
+				in
+				let attrs1 = if ilist <> [] then RLMap.add "removeprotection" (Marshal.to_string ilist [Marshal.No_sharing]) nodeonpic1.attrs else nodeonpic1.attrs
+				in
+				let attrs2 = if olist <> [] then RLMap.add "addprotection" (Marshal.to_string olist [Marshal.No_sharing]) attrs1 else attrs1
+				in
+				{nodeonpic1 with attrs = attrs2}
 			end
 			else nodeonpic1
 		end
@@ -2569,7 +2615,7 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 			) lhsdss
 		) dsdincl
 	done;
-	let updtaskcomps = IdtMap.fold (fun taskid cdefl updtccurr ->
+	let updtaskcompsPrev = IdtMap.fold (fun taskid cdefl updtccurr ->
 		let updcdefl = List.fold_right (fun (((lhsds, lhscomp), rhside) as cdef) currll ->
 			if lhscomp = "*" then
 			begin
@@ -2607,6 +2653,31 @@ let (readDataDeclarations : graphgraphtype -> (string -> NewName.idtype) -> data
 		) cdefl []
 		in IdtMap.add taskid updcdefl updtccurr
 	) taskcomps IdtMap.empty
+	in
+	let addOpenOperations cdefl protdss =
+		let rec procrhs rhs = match rhs with
+			| (DEVar (dsname, _) as leaf) -> if List.mem dsname protdss then DEAppl ("removeprotection", [leaf]) else leaf
+			| DEOp (opname, argl) -> DEOp (opname, List.map procrhs argl)
+			| DEAppl (fn, argl) -> DEAppl(fn, List.map procrhs argl)
+			| _ -> rhs
+		in
+		List.map (fun ((lhsds, lhscomp), rhside) -> ((lhsds, lhscomp), procrhs rhside)) cdefl
+	and addProtectOperations cdefl protdss =
+		List.map (fun (((lhsds, lhscomp), rhside) as cdef) ->
+			if List.mem lhsds protdss then
+				((lhsds, lhscomp), DEAppl ("addprotection", [rhside]))
+			else cdef
+		) cdefl
+	in
+	let updtaskcomps = IdtMap.mapi (fun taskid cdefl ->
+		let (n,_,_) = IdtMap.find taskid grrepr.nodes
+		in
+		let cdefl1 = if RLMap.mem "removeprotection" n.attrs then addOpenOperations cdefl (Marshal.from_string (RLMap.find "removeprotection" n.attrs) 0) else cdefl
+		in
+		let cdefl2 = if RLMap.mem "addprotection" n.attrs then addProtectOperations cdefl1 (Marshal.from_string (RLMap.find "addprotection" n.attrs) 0) else cdefl1
+		in
+		cdefl2
+	) updtaskcompsPrev
 	in
 	let grrepr' = List.fold_right (fun encnodeid grcurr ->
 		let (encnode,_,_) = IdtMap.find encnodeid grcurr.nodes
