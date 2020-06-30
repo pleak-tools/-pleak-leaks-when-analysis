@@ -1692,8 +1692,44 @@ sig
 	val optimize : DG.t -> nodetype -> DG.t option
 end);;
 
+module OptimizeProtectConfidentiality = (
+struct
+let optimize dg n =
+	match n.nkind.nodeintlbl with
+	| NNGeneric (opName, _) when (opName = "removeprotection") ->
+	begin
+		let ((IxM ccprev, prevedgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg n.id (PortOperInput 1))) dg
+		in
+		let Some (prevnid,_,prevnbackmap) = ccprev.(0)
+		in
+		let prevn = DG.findnode prevnid dg
+		in
+		if prevn.nkind.nodeintlbl <> NNGeneric ("addprotection", 1) then None else
+		let ((IxM ccprev2, prev2edgeid),_,_) = DG.findedge (IdtSet.choose (DG.edges_to_port dg prevnid (PortOperInput 1))) dg
+		and IxM ccprevfwd = prevn.ixtypemap
+		and IxM ccownfwd = n.ixtypemap
+		in
+		let Some (prev2nid,_,prev2nbackmap) = ccprev2.(0)
+		and Some (_,_,ccprevfwdmap) = ccprevfwd.(0)
+		and Some (_,_,ccownfwdmap) = ccownfwd.(0)
+		in
+		let newdg = DG.nodefoldoutedges dg (fun ((IxM ccnext, nextedgeid), nextnode, nextport) dgcurr ->
+			let Some (_,_,nextnbackmap) = ccnext.(0)
+			in
+			DG.addedge ((IxM [| Some (prev2nid, 0, mapCompose [prev2nbackmap; ccprevfwdmap; prevnbackmap; ccownfwdmap; nextnbackmap]) |], nextedgeid), nextnode.id, nextport) dgcurr
+		) n dg
+		in
+		Some newdg
+	end
+	| _ -> None
+
+end :
+sig
+	val optimize : DG.t -> nodetype -> DG.t option
+end);;
+
 let simplifyArithmetic dg =
-	let funchain = [simplifyCoalesce; simplifyError; simplifyEquality; contractNoContract; notOfConstant; simplifyFilter; simplifyAnd; simplifyOr; longopOfConst; additionToSum; simplifyDecrypt; simplifyABDecrypt; simplifyPKDecrypt; simplifyAddition; simplifyMax; simplifyMerge; OptimizeAssocLists.optimize; dontOutputNulls]
+	let funchain = [simplifyCoalesce; simplifyError; simplifyEquality; contractNoContract; notOfConstant; simplifyFilter; simplifyAnd; simplifyOr; longopOfConst; additionToSum; simplifyDecrypt; simplifyABDecrypt; simplifyPKDecrypt; simplifyAddition; simplifyMax; simplifyMerge; OptimizeAssocLists.optimize; OptimizeProtectConfidentiality.optimize; dontOutputNulls]
 	in
 	TopolSorter.fold (fun nid dgnew ->
 		List.fold_left (fun dgcurr simpfun ->

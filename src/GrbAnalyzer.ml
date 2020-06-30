@@ -883,7 +883,7 @@ let analysis dg isSQL resultfolder =
 		GrbImplication.writeItAllToZ3 dgSingleOutputs oc;
 		close_out oc;
 		(* ignore (GrbImplication.checkFlows dgSingleOutputs (Some "descAll.z3")); *)
-		let dgSingleOutputs = GrbImplication.addEncryptionAnalysisNodes dgSingleOutputs
+		let dgSingleOutputs = GrbImplication.addEncryptionAnalysisNodes (GrbCollectLeaks.makeProtectionAbsolute dgSingleOutputs)
 		in
 		let preEncAnalysisResults = GrbCollectLeaks.checkFlows dgSingleOutputs
 		in
