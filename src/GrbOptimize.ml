@@ -34,7 +34,20 @@ let removeDead dg =
 
 let foldIdentity dg =
 	let globChanges = ref true
-	and newdg = ref dg
+	and newdg = ref (DG.foldnodes (fun n dgcurr ->
+		match n.nkind.nodeintlbl with
+			| NNId -> begin
+				let noInputs = ref true
+				in
+				DG.nodefoldedges (fun _ () ->
+					noInputs := false
+				) n ();
+				if !noInputs then
+					DG.changenode {n with nkind = nkError} dgcurr
+				else dgcurr
+			end
+			| _ -> dgcurr
+	) dg dg)
 	in
 	while !globChanges do
 		print_endline "foldIdentity: start iteration";
