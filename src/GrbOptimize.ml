@@ -766,7 +766,7 @@ let simplifyAnd = simplifyICA
 	(function NNFalse _ | NNOperation (OPBoolConst false) -> true | _ -> false)
 	(Some (fun _ -> nkFalse))
 	(function NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false)
-	(fun _ -> nkTrue)
+	(function VBoolean -> nkTrue | VNaeloob -> nkTrueDT)
 ;;
 
 let simplifyOr = simplifyICA
@@ -774,7 +774,7 @@ let simplifyOr = simplifyICA
 	(function NNTrue _ | NNOperation (OPBoolConst true) -> true | _ -> false)
 	(Some (fun _ -> nkTrue))
 	(function NNFalse _ | NNOperation (OPBoolConst false) -> true | _ -> false)
-	(fun _ -> nkFalse)
+	(function VBoolean -> nkFalse | VNaeloob -> nkFalseDT)
 ;;
 
 let simplifyAddition = simplifyICA

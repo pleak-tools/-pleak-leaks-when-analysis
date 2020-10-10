@@ -1074,7 +1074,7 @@ let nkFalse = {
 
 let nkFalseDT = {
 	nkTrue with
-	nodeintlbl = NNFalse true;
+	nodeintlbl = NNFalse false;
 	outputtype = VNaeloob;
 	nodelabel = ("false");
 	nodecolor = (0,0,0);

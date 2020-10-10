@@ -514,10 +514,38 @@ let (setupPersistentsProc : datasetdeclaration RLMap.t -> (procname list * ((tas
 				in
 				let (dg1, innerWithIdLoc) = GrbInput.putIdNodeOnTop dg0 (RLMap.find sndupdtname writingdata).timepointnode (AITT [| innercomp0 |]) (AITT [| comparecomp0 |]) innerixtm
 				in
-				let (dg2, compareLoc) = GrbInput.addNodesToGraph dg1 (AITT [| comparecomp0 |]) [outerWithIdLoc; innerWithIdLoc] (nkOperation 2 VBoolean OPLessThan) (fun x -> PortOperInput (x+1))
-				in
-				currdg := dg2;
-				RLMap.add sndupdtname compareLoc mm
+				if fstupdtname = sndupdtname then
+				begin
+					let (dg2, compareLoc) = GrbInput.addNodesToGraph dg1 (AITT [| comparecomp0 |]) [outerWithIdLoc; innerWithIdLoc] (nkOperation 2 VBoolean OPLessThan) (fun x -> PortOperInput (x+1))
+					in
+					let (dg3, truenodeloc) = GrbInput.addNodesToGraph dg2 (AITT [| comparecomp0 |]) [] nkTrue (fun _ -> raise (Failure "do not call me either"))
+					in
+					currdg := dg3;
+					let checklocs = List.map (fun i ->
+						let a2 = AITT [| [| innercomp0.(i); innercomp0.(i) |] |]
+						in
+						let (ddg2, dimeqloc) = GrbInput.addNodesToGraph !currdg a2 [] nkDimEq (fun x -> raise (Failure "do not call me either"))
+						in
+						let (ddg3, dimequploc) = GrbInput.putIdNodeOnTop ddg2 dimeqloc a2 (AITT [| comparecomp0 |]) (IxM [| Some ((), 0, [|i; i + (Array.length outercomp0) - (Array.length dixtcomp0) |]) |])
+						in
+						currdg := ddg3;
+						dimequploc
+					) (intfromto (Array.length dixtcomp0) ((Array.length innercomp0) - 1))
+					in
+					let (dg4, andnodeloc) = GrbInput.addNodesToGraph !currdg (AITT [| comparecomp0 |]) (truenodeloc :: checklocs) nkAnd (fun _ -> PortStrictB true)
+					in
+					let (dg5, ornodeloc) = GrbInput.addNodesToGraph dg4 (AITT [| comparecomp0 |]) [andnodeloc; compareLoc] nkOr (fun _ -> PortUnstrB true)
+					in
+					currdg := dg5;
+					RLMap.add sndupdtname ornodeloc mm
+				end
+				else
+				begin
+					let (dg2, compareLoc) = GrbInput.addNodesToGraph dg1 (AITT [| comparecomp0 |]) [outerWithIdLoc; innerWithIdLoc] (nkOperation 2 VBoolean OPLessThan) (fun x -> PortOperInput (x+1))
+					in
+					currdg := dg2;
+					RLMap.add sndupdtname compareLoc mm
+				end
 			) updlist RLMap.empty
 			in
 			RLMap.add fstupdtname innermap m
